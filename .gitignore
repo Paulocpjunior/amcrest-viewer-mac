@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+dist/
+*.xcodeproj/xcuserdata/
+DerivedData/
+.DS_Store
+
+# Lista real de câmeras: endereços (e às vezes senhas) da sua casa. Nunca no Git.
+cameras.txt
+*cameras*.txt
+!cameras.exemplo.txt
