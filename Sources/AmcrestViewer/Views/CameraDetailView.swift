@@ -13,9 +13,12 @@ struct CameraDetailView: View {
     @State private var message: String?
     @State private var speed = 4.0
     @State private var preset = 1
+    @State private var saveIndex = 1
     @State private var presets: [PTZPreset] = []
     @State private var showRecordings = false
     @State private var confirmSavePreset = false
+    @State private var cameraPresets: [PTZPreset] = []
+    @State private var newPresetName = ""
 
     private var quality: StreamQuality { StreamQuality(rawValue: qualityRaw) ?? .main }
     /// Sempre a versão atual do cadastro (pode ter sido editada nesta janela).
@@ -108,29 +111,36 @@ struct CameraDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Presets").font(.caption)
                 if !presets.isEmpty {
-                    Picker("Preset", selection: $preset) {
+                    Picker("Ir para", selection: $preset) {
                         ForEach(presets) { p in Text("\(p.index). \(p.name)").tag(p.index) }
                     }
                     .labelsHidden()
-                } else {
-                    Stepper("Preset \(preset)", value: $preset, in: 1...255)
-                }
-                HStack {
                     Button("Ir") { run { try await client.gotoPreset(preset) } }
-                    Button("Salvar aqui") { confirmSavePreset = true }
-                        .help("Grava a posição atual no preset escolhido")
                 }
+                Divider()
+                Text("Salvar posição atual").font(.caption)
+                HStack {
+                    Stepper("Nº \(saveIndex)", value: $saveIndex, in: 1...255)
+                }
+                TextField("Nome (ex.: Portão)", text: $newPresetName)
+                    .textFieldStyle(.roundedBorder)
+                Button("Salvar aqui") { confirmSavePreset = true }
+                    .help("Grava a posição atual da câmera neste número, com o nome digitado")
             }
-            .confirmationDialog("Salvar a posição atual no preset \(preset)?",
+            .confirmationDialog("Salvar a posição atual no preset \(saveIndex)?",
                                 isPresented: $confirmSavePreset) {
                 Button("Salvar") {
-                    let n = preset
+                    let n = saveIndex
+                    let name = newPresetName
                     run {
                         try await client.setPreset(n)
+                        PresetNames.set(name, index: n, camera: current)
+                        newPresetName = ""
+                        preset = n
                         loadPresets()
                     }
                 }
-            } message: { Text("O que estava gravado neste preset será substituído.") }
+            } message: { Text("Se já houver uma posição gravada neste número, ela será substituída.") }
             Text("Segure o botão para mover. Câmeras fixas (sem PTZ) ignoram estes comandos.")
                 .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Spacer()
@@ -140,12 +150,15 @@ struct CameraDetailView: View {
 
     private func loadPresets() {
         let c = client
+        let cam = current
         Task {
-            // Câmeras sem PTZ ou firmware antigo não respondem: fica o seletor numérico.
-            if let list = try? await c.presets(), !list.isEmpty {
-                presets = list
-                if !list.contains(where: { $0.index == preset }) { preset = list[0].index }
-            }
+            // Câmeras sem PTZ ou firmware antigo não respondem: valem só os nomes do app.
+            if let list = try? await c.presets() { cameraPresets = list }
+            presets = PTZPreset.merge(camera: cameraPresets, local: PresetNames.all(camera: cam))
+            if let first = presets.first, !presets.contains(where: { $0.index == preset }) { preset = first.index }
+            // Sugere o próximo número livre para salvar.
+            let used = Set(presets.map(\.index))
+            saveIndex = (1...255).first { !used.contains($0) } ?? 1
         }
     }
 
@@ -200,5 +213,22 @@ struct PressHoldButton: View {
                         onChange(false)
                     }
             )
+    }
+}
+
+/// Nomes de preset dados no app, por câmera (a API HTTP não grava nome de preset de forma uniforme).
+enum PresetNames {
+    private static func key(_ cam: Camera) -> String { "presetNames.\(cam.id.uuidString)" }
+
+    static func all(camera: Camera) -> [Int: String] {
+        let raw = UserDefaults.standard.dictionary(forKey: key(camera)) as? [String: String] ?? [:]
+        return Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in Int(k).map { ($0, v) } })
+    }
+
+    static func set(_ name: String, index: Int, camera: Camera) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var raw = UserDefaults.standard.dictionary(forKey: key(camera)) as? [String: String] ?? [:]
+        if trimmed.isEmpty { raw.removeValue(forKey: String(index)) } else { raw[String(index)] = trimmed }
+        UserDefaults.standard.set(raw, forKey: key(camera))
     }
 }

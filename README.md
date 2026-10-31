@@ -19,8 +19,8 @@ Não usa a nuvem nem o P2P da Amcrest, e não depende de bibliotecas externas.
   - **PTZ** (segure a seta para mover, zoom, velocidade e presets);
   - **snapshot**, salvo em `Imagens/Amcrest`;
   - **abrir no VLC**: RTSP principal, em alta qualidade e com áudio.
-  - **presets com nome**: lista os presets salvos na câmera e grava a posição atual num preset (pede confirmação);
-  - **gravações do microSD**: escolha o dia, veja os vídeos (início, fim, duração, movimento ou contínua), assista no VLC ou baixe o `.dav` para `Filmes/Amcrest`.
+  - **presets com nome**: lista os presets salvos na câmera e grava a posição atual num número, com o nome que você digitar (o nome fica guardado no app);
+  - **gravações do microSD**: escolha o dia, veja os vídeos (início, fim, duração, movimento ou contínua), assista ou baixe o `.dav` para `Filmes/Amcrest`. **Assistir precisa do [VLC](https://www.videolan.org/vlc/download-macos.html)** instalado; baixar funciona sem ele.
 - **Senhas no Keychain** do macOS. Nunca ficam em arquivo.
 - **Testar conexão** no cadastro: mostra o modelo da câmera ou diz o que corrigir.
 - **Se a câmera não oferecer MJPEG** naquele fluxo, o app passa a buscar snapshots (cerca de 1 por segundo) e avisa na tela ("snapshots ~1/s"), para ninguém confundir com vídeo contínuo.

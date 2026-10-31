@@ -17,6 +17,8 @@ struct RecordingsView: View {
     @State private var message: String?
     @State private var selection: RecordingFile.ID?
 
+    @State private var hasVLC = ExternalActions.isVLCInstalled
+
     private var client: AmcrestClient { AmcrestClient(camera: camera, password: password) }
 
     var body: some View {
@@ -31,6 +33,24 @@ struct RecordingsView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(loading)
+            }
+
+            if !hasVLC {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Para assistir aqui é preciso o VLC (gratuito). Sem ele, use Baixar e abra o arquivo .dav no VLC depois.")
+                        HStack {
+                            Link("Baixar o VLC", destination: URL(string: "https://www.videolan.org/vlc/download-macos.html")!)
+                            Button("Já instalei") { hasVLC = ExternalActions.isVLCInstalled }
+                                .buttonStyle(.link)
+                        }
+                    }
+                }
+                .font(.callout)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
             }
 
             content
@@ -78,7 +98,8 @@ struct RecordingsView: View {
                 TableColumn("") { f in
                     HStack(spacing: 6) {
                         Button { play(f) } label: { Image(systemName: "play.fill") }
-                            .help("Assistir no VLC")
+                            .help(hasVLC ? "Assistir no VLC" : "Instale o VLC para assistir")
+                            .disabled(!hasVLC)
                         if downloading.contains(f.id) {
                             ProgressView().controlSize(.small)
                         } else {

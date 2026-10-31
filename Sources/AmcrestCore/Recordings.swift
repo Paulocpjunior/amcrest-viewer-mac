@@ -42,6 +42,18 @@ public struct PTZPreset: Identifiable, Hashable, Sendable {
         self.index = index
         self.name = name
     }
+
+    /// Junta os presets da câmera com os nomes dados no app (`local`, índice → nome).
+    /// O nome do app vence; um preset só com nome local também entra. Ordem por índice.
+    public static func merge(camera: [PTZPreset], local: [Int: String]) -> [PTZPreset] {
+        var byIndex = Dictionary(camera.map { ($0.index, $0) }, uniquingKeysWith: { a, _ in a })
+        for (i, n) in local {
+            let name = n.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            byIndex[i] = PTZPreset(index: i, name: name)
+        }
+        return byIndex.values.sorted { $0.index < $1.index }
+    }
 }
 
 /// Lê as respostas texto da API HTTP Dahua/Amcrest (`chave=valor`, uma por linha).

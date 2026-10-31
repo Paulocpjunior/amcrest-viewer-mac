@@ -101,6 +101,14 @@ final class RecordingsTests: XCTestCase {
                        "rtsp://192.168.1.10:554/cam/playback?channel=1&starttime=2024_01_05_09_30_37&endtime=2024_01_05_09_40_37")
     }
 
+    func testNomesLocaisDePreset() {
+        let cam = [PTZPreset(index: 1, name: "Preset 1"), PTZPreset(index: 2, name: "Portão")]
+        let merged = PTZPreset.merge(camera: cam, local: [1: "Garagem", 5: " Rua ", 7: "  "])
+        XCTAssertEqual(merged, [PTZPreset(index: 1, name: "Garagem"),
+                                PTZPreset(index: 2, name: "Portão"),
+                                PTZPreset(index: 5, name: "Rua")])
+    }
+
     func testSetPreset() {
         let q = query(AmcrestEndpoints.setPreset(cam, preset: 3))
         XCTAssertEqual(q["code"], "SetPreset")

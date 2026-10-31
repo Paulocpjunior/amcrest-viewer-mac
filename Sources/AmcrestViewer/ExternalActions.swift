@@ -5,6 +5,10 @@ import AmcrestCore
 enum ExternalActions {
     static let vlcBundleID = "org.videolan.vlc"
 
+    static var isVLCInstalled: Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: vlcBundleID) != nil
+    }
+
     /// Abre o fluxo RTSP principal (alta qualidade, com áudio) no VLC.
     /// Devolve uma mensagem de erro com a ação, ou nil se deu certo.
     @discardableResult
