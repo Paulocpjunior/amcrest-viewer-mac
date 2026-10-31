@@ -1,0 +1,168 @@
+import Foundation
+import Security
+import AmcrestCore
+
+/// Senhas no Keychain do macOS. Nunca em arquivo, nunca em log.
+enum Keychain {
+    static let service = "com.paulocpjunior.AmcrestViewer"
+
+    static func set(_ password: String, account: String) {
+        delete(account: account)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: Data(password.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+        ]
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    static func get(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func delete(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
+/// Resultado de uma importação de .txt, para mostrar ao usuário sem esconder nada.
+struct ImportReport: Identifiable {
+    let id = UUID()
+    let fileName: String
+    var added: [Camera] = []
+    var duplicates: [(line: Int, camera: Camera)] = []
+    var rejected: [CameraListParser.Rejected] = []
+    /// Câmeras importadas que ficaram sem senha.
+    var missingPassword: [Camera] = []
+}
+
+/// Lista de câmeras, gravada em ~/Library/Application Support/AmcrestViewer/cameras.json.
+@MainActor
+final class CameraStore: ObservableObject {
+    @Published private(set) var cameras: [Camera] = []
+    @Published var errorMessage: String?
+    /// Muda a cada gravação (inclusive troca de senha) para as telas reconectarem.
+    @Published private(set) var revision = 0
+
+    private let fileURL: URL
+
+    init() {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        let dir = base.appendingPathComponent("AmcrestViewer", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        fileURL = dir.appendingPathComponent("cameras.json")
+        load()
+    }
+
+    func camera(id: UUID) -> Camera? { cameras.first { $0.id == id } }
+
+    func password(for camera: Camera) -> String? { Keychain.get(account: camera.id.uuidString) }
+
+    func hasPassword(_ camera: Camera) -> Bool { !(password(for: camera) ?? "").isEmpty }
+
+    /// `password == nil` mantém a senha atual; string vazia apaga.
+    func save(_ camera: Camera, password: String?) {
+        if let i = cameras.firstIndex(where: { $0.id == camera.id }) {
+            cameras[i] = camera
+        } else {
+            cameras.append(camera)
+        }
+        if let password {
+            if password.isEmpty { Keychain.delete(account: camera.id.uuidString) }
+            else { Keychain.set(password, account: camera.id.uuidString) }
+        }
+        revision += 1
+        persist()
+    }
+
+    func remove(_ camera: Camera) {
+        cameras.removeAll { $0.id == camera.id }
+        Keychain.delete(account: camera.id.uuidString)
+        persist()
+    }
+
+    func move(from source: IndexSet, to destination: Int) {
+        cameras.move(fromOffsets: source, toOffset: destination)
+        persist()
+    }
+
+    /// Aplica o mesmo usuário e senha a várias câmeras (caso comum: todas com a mesma senha).
+    func applyCredentials(to targets: [Camera], username: String, password: String) {
+        for cam in targets {
+            guard var current = camera(id: cam.id) else { continue }
+            if !username.isEmpty { current.username = username }
+            save(current, password: password)
+        }
+    }
+
+    func importTXT(from url: URL) -> ImportReport {
+        var report = ImportReport(fileName: url.lastPathComponent)
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        guard let data = try? Data(contentsOf: url) else {
+            errorMessage = "Não consegui ler \(url.lastPathComponent). Confira se o arquivo existe e se você tem permissão de leitura."
+            return report
+        }
+        // Bloco de Notas do Windows costuma gravar em Windows-1252.
+        let text = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .windowsCP1252)
+            ?? String(decoding: data, as: UTF8.self)
+
+        let parsed = CameraListParser.parse(text)
+        report.rejected = parsed.rejected
+
+        for item in parsed.cameras {
+            let isDuplicate = cameras.contains {
+                $0.host.caseInsensitiveCompare(item.camera.host) == .orderedSame && $0.channel == item.camera.channel
+            }
+            if isDuplicate {
+                report.duplicates.append((item.lineNumber, item.camera))
+                continue
+            }
+            save(item.camera, password: item.password)
+            report.added.append(item.camera)
+            if item.password == nil { report.missingPassword.append(item.camera) }
+        }
+        return report
+    }
+
+    // MARK: - Arquivo
+
+    private func load() {
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        do {
+            cameras = try JSONDecoder().decode([Camera].self, from: data)
+        } catch {
+            errorMessage = "A lista de câmeras salva está corrompida (\(fileURL.path)). Renomeie o arquivo e importe o .txt de novo."
+        }
+    }
+
+    private func persist() {
+        do {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try enc.encode(cameras).write(to: fileURL, options: .atomic)
+        } catch {
+            errorMessage = "Não consegui salvar a lista de câmeras em \(fileURL.path): \(error.localizedDescription)"
+        }
+    }
+}

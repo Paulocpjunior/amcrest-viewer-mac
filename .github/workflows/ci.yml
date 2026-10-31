@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versão do Swift
+        run: swift --version
+      - name: Compilar
+        run: swift build 2>&1 | tail -60
+        shell: bash -o pipefail {0}
+      - name: Testes
+        run: swift test 2>&1 | tail -60
+        shell: bash -o pipefail {0}
