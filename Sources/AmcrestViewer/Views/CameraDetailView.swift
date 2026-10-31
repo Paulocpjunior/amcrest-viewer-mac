@@ -13,6 +13,9 @@ struct CameraDetailView: View {
     @State private var message: String?
     @State private var speed = 4.0
     @State private var preset = 1
+    @State private var presets: [PTZPreset] = []
+    @State private var showRecordings = false
+    @State private var confirmSavePreset = false
 
     private var quality: StreamQuality { StreamQuality(rawValue: qualityRaw) ?? .main }
     /// Sempre a versão atual do cadastro (pode ter sido editada nesta janela).
@@ -44,15 +47,20 @@ struct CameraDetailView: View {
                     message = ExternalActions.openInVLC(current, password: store.password(for: current))
                 } label: { Label("VLC", systemImage: "play.rectangle") }
                     .help("Abrir o RTSP principal no VLC (alta qualidade, com áudio)")
+                Button { showRecordings = true } label: { Label("Gravações", systemImage: "sdcard") }
+                    .help("Ver e baixar os vídeos gravados no cartão microSD")
                 Toggle(isOn: $showPTZ) { Label("PTZ", systemImage: "dpad") }
                     .help("Mostrar controles de movimento")
                 Button { editing = true } label: { Label("Editar", systemImage: "slider.horizontal.3") }
             }
         }
-        .onAppear { start() }
+        .onAppear { start(); loadPresets() }
         .onDisappear { feed.stop() }
         .onChange(of: qualityRaw) { _ in start() }
-        .onChange(of: store.revision) { _ in start() }
+        .onChange(of: store.revision) { _ in start(); loadPresets() }
+        .sheet(isPresented: $showRecordings) {
+            RecordingsView(camera: current, password: store.password(for: current))
+        }
         .sheet(isPresented: $editing) {
             if let current = store.camera(id: camera.id) {
                 CameraEditorView(camera: current, isNew: false).environmentObject(store)
@@ -97,15 +105,48 @@ struct CameraDetailView: View {
                 Text("Velocidade: \(Int(speed))").font(.caption)
                 Slider(value: $speed, in: 1...8, step: 1)
             }
-            HStack {
-                Stepper("Preset \(preset)", value: $preset, in: 1...255)
-                Button("Ir") { run { try await client.gotoPreset(preset) } }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Presets").font(.caption)
+                if !presets.isEmpty {
+                    Picker("Preset", selection: $preset) {
+                        ForEach(presets) { p in Text("\(p.index). \(p.name)").tag(p.index) }
+                    }
+                    .labelsHidden()
+                } else {
+                    Stepper("Preset \(preset)", value: $preset, in: 1...255)
+                }
+                HStack {
+                    Button("Ir") { run { try await client.gotoPreset(preset) } }
+                    Button("Salvar aqui") { confirmSavePreset = true }
+                        .help("Grava a posição atual no preset escolhido")
+                }
             }
+            .confirmationDialog("Salvar a posição atual no preset \(preset)?",
+                                isPresented: $confirmSavePreset) {
+                Button("Salvar") {
+                    let n = preset
+                    run {
+                        try await client.setPreset(n)
+                        loadPresets()
+                    }
+                }
+            } message: { Text("O que estava gravado neste preset será substituído.") }
             Text("Segure o botão para mover. Câmeras fixas (sem PTZ) ignoram estes comandos.")
                 .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Spacer()
         }
         .padding()
+    }
+
+    private func loadPresets() {
+        let c = client
+        Task {
+            // Câmeras sem PTZ ou firmware antigo não respondem: fica o seletor numérico.
+            if let list = try? await c.presets(), !list.isEmpty {
+                presets = list
+                if !list.contains(where: { $0.index == preset }) { preset = list[0].index }
+            }
+        }
     }
 
     private func ptzButton(_ cmd: PTZCommand, _ symbol: String) -> some View {

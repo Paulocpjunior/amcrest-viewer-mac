@@ -19,6 +19,31 @@ enum ExternalActions {
         return nil
     }
 
+    /// Abre uma URL qualquer (RTSP de gravação, arquivo .dav) no VLC.
+    @discardableResult
+    static func openInVLC(url: URL?) -> String? {
+        guard let vlc = NSWorkspace.shared.urlForApplication(withBundleIdentifier: vlcBundleID) else {
+            return "VLC não encontrado. Instale em videolan.org para assistir às gravações."
+        }
+        guard let url else { return CameraError.invalidAddress.errorDescription }
+        NSWorkspace.shared.open([url], withApplicationAt: vlc, configuration: NSWorkspace.OpenConfiguration())
+        return nil
+    }
+
+    /// Pasta das gravações baixadas: ~/Movies/Amcrest/<câmera>.
+    static func recordingsFolder(for camera: Camera) throws -> URL {
+        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Movies")
+        let dir = movies.appendingPathComponent("Amcrest", isDirectory: true)
+            .appendingPathComponent(safeName(camera.name), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func safeName(_ name: String) -> String {
+        name.components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
+    }
+
     /// Copia a URL RTSP SEM senha (para colar em outro programa sem vazar a credencial).
     static func copyRTSP(_ camera: Camera) {
         guard let url = AmcrestEndpoints.rtsp(camera, quality: .main) else { return }

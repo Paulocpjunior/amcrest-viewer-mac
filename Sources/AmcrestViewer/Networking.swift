@@ -130,6 +130,65 @@ struct AmcrestClient {
         _ = try await get(AmcrestEndpoints.gotoPreset(camera, preset: preset))
     }
 
+    // MARK: Presets
+
+    func presets() async throws -> [PTZPreset] {
+        let (data, _) = try await get(AmcrestEndpoints.getPresets(camera))
+        return DahuaResponse.presets(String(decoding: data, as: UTF8.self))
+    }
+
+    func setPreset(_ preset: Int) async throws {
+        _ = try await get(AmcrestEndpoints.setPreset(camera, preset: preset))
+    }
+
+    // MARK: Gravações do microSD
+
+    /// Lista os vídeos gravados entre `from` e `to`, em ordem de horário.
+    /// Para no máximo `limit` arquivos, para não travar com cartões cheios.
+    func recordings(from: Date, to: Date, limit: Int = 2000) async throws -> [RecordingFile] {
+        let (created, _) = try await get(AmcrestEndpoints.mediaFindCreate(camera))
+        guard let object = DahuaResponse.findObject(String(decoding: created, as: UTF8.self)) else {
+            throw CameraError.unexpectedContent
+        }
+        defer {
+            // Libera o objeto na câmera mesmo se algo falhar no meio.
+            let cam = camera, pwd = password
+            Task {
+                let c = AmcrestClient(camera: cam, password: pwd)
+                _ = try? await c.get(AmcrestEndpoints.mediaFindClose(cam, object: object))
+                _ = try? await c.get(AmcrestEndpoints.mediaFindDestroy(cam, object: object))
+            }
+        }
+        do {
+            _ = try await get(AmcrestEndpoints.mediaFindStart(camera, object: object, from: from, to: to))
+        } catch CameraError.http(400) {
+            // A câmera responde 400 quando não há nada gravado no período (ou não há cartão).
+            return []
+        }
+        var all: [RecordingFile] = []
+        let page = 100
+        while all.count < limit {
+            let (data, _) = try await get(AmcrestEndpoints.mediaFindNext(camera, object: object, count: page))
+            let (found, files) = DahuaResponse.recordings(String(decoding: data, as: UTF8.self))
+            all += files
+            if found < page || files.isEmpty { break }
+        }
+        return all.sorted { $0.start < $1.start }
+    }
+
+    /// Baixa um arquivo gravado para `destination` (substitui se já existir).
+    func download(_ file: RecordingFile, to destination: URL) async throws {
+        guard let url = AmcrestEndpoints.loadFile(camera, path: file.filePath) else { throw CameraError.invalidAddress }
+        let delegate = TaskAuthDelegate(credential: AuthHandling.credential(for: camera, password: password))
+        let (tmp, response) = try await Self.session.download(from: url, delegate: delegate)
+        guard let http = response as? HTTPURLResponse else { throw CameraError.unexpectedContent }
+        if http.statusCode == 401 { throw CameraError.unauthorized }
+        guard (200..<300).contains(http.statusCode) else { throw CameraError.http(http.statusCode) }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+        try fm.moveItem(at: tmp, to: destination)
+    }
+
     /// Resposta típica: `type=IP2M-841B`. Devolve só o modelo.
     func deviceType() async throws -> String {
         let (data, _) = try await get(AmcrestEndpoints.deviceType(camera))
