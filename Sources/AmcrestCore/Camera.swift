@@ -11,6 +11,9 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
     public var channel: Int
     public var username: String
     public var useHTTPS: Bool
+    /// Número de série (S/N) da câmera. Só anotação: o app acessa por IP.
+    /// Guardado para a lista ficar completa; não é usado para conectar.
+    public var serial: String
 
     public init(
         id: UUID = UUID(),
@@ -20,7 +23,8 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
         rtspPort: Int = 554,
         channel: Int = 1,
         username: String = "admin",
-        useHTTPS: Bool = false
+        useHTTPS: Bool = false,
+        serial: String = ""
     ) {
         self.id = id
         self.name = name
@@ -30,6 +34,21 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
         self.channel = channel
         self.username = username
         self.useHTTPS = useHTTPS
+        self.serial = serial
+    }
+
+    // Decodificação tolerante: cadastros antigos (sem `serial`) continuam válidos.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        host = try c.decode(String.self, forKey: .host)
+        httpPort = try c.decode(Int.self, forKey: .httpPort)
+        rtspPort = try c.decode(Int.self, forKey: .rtspPort)
+        channel = try c.decode(Int.self, forKey: .channel)
+        username = try c.decode(String.self, forKey: .username)
+        useHTTPS = try c.decode(Bool.self, forKey: .useHTTPS)
+        serial = try c.decodeIfPresent(String.self, forKey: .serial) ?? ""
     }
 }
 

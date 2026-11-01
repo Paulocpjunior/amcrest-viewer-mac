@@ -28,6 +28,8 @@ struct CameraEditorView: View {
                 Stepper("Canal: \(camera.channel)", value: $camera.channel, in: 1...128)
                 Toggle("Usar HTTPS", isOn: $camera.useHTTPS)
                 TextField("Usuário", text: $camera.username)
+                TextField("Serial (S/N)", text: $camera.serial,
+                          prompt: Text("Opcional. Ex.: AMC01858719C691882"))
                 SecureField("Senha", text: $password,
                             prompt: Text(isNew || !store.hasPassword(camera) ? "Senha da câmera" : "Deixe em branco para manter a atual"))
             }
@@ -76,6 +78,7 @@ struct CameraEditorView: View {
         var c = camera
         c.host = c.host.trimmingCharacters(in: .whitespaces)
         c.name = c.name.trimmingCharacters(in: .whitespaces)
+        c.serial = c.serial.trimmingCharacters(in: .whitespaces)
         if c.name.isEmpty { c.name = c.host }
         return c
     }
