@@ -101,7 +101,11 @@ final class NetworkScanner: ObservableObject {
             if let fd = makeProbeSocket(interface: nil, dest: &dest, payload: payload) { sockets.append(fd) }
         } else {
             for itf in interfaces {
-                if let fd = makeProbeSocket(interface: itf, dest: &dest, payload: payload) { sockets.append(fd) }
+                guard let fd = makeProbeSocket(interface: itf, dest: &dest, payload: payload) else { continue }
+                // Além do multicast, pergunta direto (unicast) a cada IP do /24 da interface:
+                // pega câmeras que não respondem multicast (switch/firewall barrando o grupo).
+                sendUnicastSweep(fd: fd, subnetOf: itf.ip, payload: payload)
+                sockets.append(fd)
             }
         }
         guard !sockets.isEmpty else { return [] }
@@ -159,5 +163,27 @@ final class NetworkScanner: ObservableObject {
         }
         if sent < 0 { close(fd); return nil }
         return fd
+    }
+
+    /// Dispara o Probe unicast para cada host do /24 da interface, pelo socket já amarrado a ela.
+    /// Complementa o multicast: acha câmeras em redes/switches que bloqueiam o grupo multicast.
+    private nonisolated static func sendUnicastSweep(fd: Int32, subnetOf ip: String, payload: [UInt8]) {
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4 else { return }
+        let base = "\(parts[0]).\(parts[1]).\(parts[2])"
+        var dst = sockaddr_in()
+        dst.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        dst.sin_family = sa_family_t(AF_INET)
+        dst.sin_port = OnvifDiscovery.multicastPort.bigEndian  // 3702 (porta do WS-Discovery)
+        for host in 1...254 {
+            guard inet_pton(AF_INET, "\(base).\(host)", &dst.sin_addr) == 1 else { continue }
+            _ = withUnsafePointer(to: &dst) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    payload.withUnsafeBytes { buf in
+                        sendto(fd, buf.baseAddress, buf.count, 0, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                }
+            }
+        }
     }
 }
