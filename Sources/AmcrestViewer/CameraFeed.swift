@@ -69,6 +69,10 @@ final class CameraFeed: ObservableObject {
     var detectKinds: Set<DetectionKind> = [] {
         didSet {
             guard detectKinds != oldValue else { return }
+            // Invalida qualquer análise em voo: um resultado de antes da troca
+            // não pode reacender um selo depois de religar.
+            detectEpoch &+= 1
+            analyzing = false
             for kind in oldValue.subtracting(detectKinds) { gates[kind] = nil }
             present = present.intersection(detectKinds)
         }
@@ -86,6 +90,8 @@ final class CameraFeed: ObservableObject {
     private var pacer = DetectionGate()
     private var gates: [DetectionKind: DetectionGate] = [:]
     private var analyzing = false
+    /// Muda a cada vez que a detecção é ligada/desligada; descarta trabalho antigo.
+    private var detectEpoch = 0
     private let detectQueue = DispatchQueue(label: "amcrest.detect", qos: .utility)
 
     private var camera: Camera?
@@ -120,6 +126,8 @@ final class CameraFeed: ObservableObject {
         present = []
         pacer = DetectionGate()
         gates = [:]
+        analyzing = false
+        detectEpoch &+= 1
     }
 
     // MARK: - MJPEG
@@ -222,13 +230,17 @@ final class CameraFeed: ObservableObject {
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         let kinds = detectKinds
         analyzing = true
+        let epoch = detectEpoch
         detectQueue.async { [weak self] in
             let found = SceneDetector.detect(inCGImage: cg, kinds: kinds)
-            Task { @MainActor in self?.finishAnalysis(found: found, requested: kinds, gen: gen) }
+            Task { @MainActor in self?.finishAnalysis(found: found, requested: kinds, gen: gen, epoch: epoch) }
         }
     }
 
-    private func finishAnalysis(found: Set<DetectionKind>, requested: Set<DetectionKind>, gen: Int) {
+    private func finishAnalysis(found: Set<DetectionKind>, requested: Set<DetectionKind>, gen: Int, epoch: Int) {
+        // A detecção mudou depois que esta análise começou: descarta, sem mexer
+        // no `analyzing` de uma análise mais nova que já esteja em voo.
+        guard epoch == detectEpoch else { return }
         analyzing = false
         guard gen == generation, active else { return }
         let now = Date()
