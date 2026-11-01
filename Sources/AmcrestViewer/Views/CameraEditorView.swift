@@ -8,6 +8,8 @@ struct CameraEditorView: View {
 
     @State var camera: Camera
     let isNew: Bool
+    /// Aberto por "Adicionar por S/N": destaca o campo do S/N.
+    var bySerial = false
 
     @State private var password = ""
     @State private var testResult: String?
@@ -24,7 +26,13 @@ struct CameraEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(isNew ? "Nova câmera" : "Editar câmera").font(.title2.weight(.semibold))
+            Text(isNew ? (bySerial ? "Nova câmera por S/N" : "Nova câmera") : "Editar câmera")
+                .font(.title2.weight(.semibold))
+            if isNew && bySerial {
+                Text("Preencha o nome, o S/N e a senha. Deixe o Endereço em branco: o app acha o IP na rede.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Form {
                 TextField("Nome", text: $camera.name, prompt: Text("Ex.: Garagem"))
@@ -78,6 +86,9 @@ struct CameraEditorView: View {
         if !trimmedHost.isEmpty && CameraListParser.hostPort(trimmedHost) == nil {
             return "Endereço inválido. Use um IP (192.168.1.10) ou nome (cam.local)."
         }
+        if camera.httpPort == LanSweep.dahuaTCPPort || camera.rtspPort == LanSweep.dahuaTCPPort {
+            return "37777 é a porta do app oficial da Amcrest, não serve aqui. Use HTTP 80 e RTSP 554."
+        }
         if !(1...65535).contains(camera.httpPort) || !(1...65535).contains(camera.rtspPort) {
             return "Portas vão de 1 a 65535 (padrão: HTTP 80, RTSP 554)."
         }
@@ -118,10 +129,40 @@ struct CameraEditorView: View {
                 testOK = true
                 testResult = "Conectado em \(cam.host). Modelo: \(model)"
             } catch {
+                // IP salvo não responde, mas tem S/N: procura o aparelho na rede interna e troca o IP.
+                if !(error is CameraError), !trimmedSerial.isEmpty, !Task.isCancelled,
+                   let moved = await relocated(from: cam) {
+                    camera = moved
+                    do {
+                        let model = try await AmcrestClient(camera: moved, password: effectivePassword).deviceType()
+                        testOK = true
+                        testResult = "Achei pelo S/N em \(moved.host) (o IP \(cam.host) não respondia). Modelo: \(model). Clique em Salvar."
+                    } catch {
+                        testOK = false
+                        testResult = "Achei pelo S/N em \(moved.host), mas: "
+                            + (await LoginDiagnosis.explain(error, camera: moved, password: effectivePassword))
+                    }
+                    return
+                }
                 testOK = false
-                testResult = CameraError.friendly(error, camera: cam)
+                testResult = (await LoginDiagnosis.explain(error, camera: cam, password: effectivePassword))
+                    + (error is CameraError || trimmedSerial.isEmpty ? "" : " Também procurei o S/N \(trimmedSerial) em toda a rede interna do Mac e não achei.")
             }
         }
+    }
+
+    /// Procura o S/N na rede interna. Devolve a câmera com o IP novo, ou nil se não achou outro IP.
+    private func relocated(from cam: Camera) async -> Camera? {
+        resolving = true
+        defer { resolving = false }
+        guard let dev = await scanner.resolve(serial: trimmedSerial, username: cam.username,
+                                              password: effectivePassword, preferredPort: cam.httpPort),
+              dev.host != cam.host else { return nil }
+        var c = cam
+        c.host = dev.host
+        c.httpPort = dev.httpPort
+        c.useHTTPS = dev.useHTTPS
+        return c
     }
 
     private func save() {
@@ -149,9 +190,10 @@ struct CameraEditorView: View {
         }
         resolving = true
         defer { resolving = false }
-        guard let dev = await scanner.resolve(serial: serial) else {
+        guard let dev = await scanner.resolve(serial: serial, username: cam.username,
+                                              password: effectivePassword, preferredPort: cam.httpPort) else {
             testOK = false
-            testResult = "Não achei a câmera com o S/N \(serial) na rede. Confira se ela está ligada e na mesma rede do Mac, ou informe o IP."
+            testResult = "Procurei na rede interna (ONVIF e toda a faixa de IP do Mac) e não achei o S/N \(serial). Confira se o aparelho está ligado nesta mesma rede. Se ele estiver em outro local, cadastre pelo IP."
             return nil
         }
         cam.host = dev.host

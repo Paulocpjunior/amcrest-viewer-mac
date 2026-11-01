@@ -42,7 +42,7 @@ private final class MJPEGSessionDelegate: NSObject, URLSessionDataDelegate {
 /// 1. Tenta MJPEG (`/cgi-bin/mjpg/video.cgi`), que dá movimento fluido sem dependências.
 /// 2. Se a câmera não oferecer MJPEG naquele fluxo, cai para snapshots seguidos (~1 por segundo)
 ///    e diz isso na tela: o usuário sabe que não é vídeo contínuo.
-/// 3. Queda de rede: tenta de novo a cada 5 s. Senha errada: para e pede correção.
+/// 3. Queda de rede: tenta de novo (5 s, depois mais espaçado). Senha errada: para e pede correção.
 @MainActor
 final class CameraFeed: ObservableObject {
     enum Status: Equatable {
@@ -103,9 +103,18 @@ final class CameraFeed: ObservableObject {
     /// Cada conexão tem um número; respostas de conexões antigas são ignoradas.
     private var generation = 0
     private var active = false
+    /// Falhas seguidas: espaça as novas tentativas (5 s, 15 s, 60 s…) para não insistir
+    /// com a câmera — várias tentativas seguidas fazem a Amcrest bloquear o login por até 30 min.
+    private var consecutiveFailures = 0
+
+    /// 5 s nas duas primeiras falhas, depois 15 s, depois 60 s.
+    nonisolated static func retryDelay(afterFailures n: Int) -> Double {
+        n <= 2 ? 5 : (n <= 4 ? 15 : 60)
+    }
 
     func start(camera: Camera, password: String?, quality: StreamQuality) {
         stop()
+        consecutiveFailures = 0
         self.camera = camera
         self.password = password
         self.quality = quality
@@ -143,7 +152,9 @@ final class CameraFeed: ObservableObject {
         status = .connecting
 
         let delegate = MJPEGSessionDelegate()
-        delegate.credential = AuthHandling.credential(for: camera, password: password)
+        // O request do MJPEG já leva o login no cabeçalho (authorizedRequest, abaixo). Sem credencial
+        // no delegate, a câmera não recebe uma 2ª tentativa de login se a 1ª for recusada.
+        delegate.credential = nil
         delegate.onResponse = { [weak self] http in
             let isMultipart = http.mimeType?.lowercased().hasPrefix("multipart/") ?? false
             let ok = http.statusCode == 200 && isMultipart
@@ -164,7 +175,20 @@ final class CameraFeed: ObservableObject {
                            delegate: delegate, delegateQueue: queue)
         session?.invalidateAndCancel()
         session = s
-        s.dataTask(with: url).resume()
+        // Login Digest montado pelo app (desafio novo a cada conexão do vídeo).
+        let cam = camera, pwd = password
+        Task { [weak self] in
+            let request: URLRequest
+            do {
+                request = try await CameraHTTP.authorizedRequest(url, camera: cam, password: pwd, fresh: true)
+            } catch {
+                guard let self, gen == self.generation, self.active else { return }
+                self.fail(CameraError.friendly(error, camera: cam), retry: true)
+                return
+            }
+            guard let self, gen == self.generation, self.active else { return }
+            s.dataTask(with: request).resume()
+        }
     }
 
     private func handleMJPEGResponse(_ http: HTTPURLResponse, isMultipart: Bool, gen: Int) {
@@ -198,10 +222,21 @@ final class CameraFeed: ObservableObject {
         status = .polling
         let client = AmcrestClient(camera: camera, password: password)
         pollTask = Task { [weak self] in
+            var badImages = 0
             while !Task.isCancelled {
                 do {
                     let data = try await client.snapshot()
-                    if let img = NSImage(data: data) { self?.show(img, gen: gen) }
+                    if let img = NSImage(data: data) {
+                        badImages = 0
+                        self?.show(img, gen: gen)
+                    } else {
+                        badImages += 1
+                        if badImages >= 3 {
+                            guard let self, gen == self.generation else { return }
+                            self.fail(CameraError.unexpectedContent.errorDescription!, retry: true)
+                            return
+                        }
+                    }
                 } catch {
                     guard let self, gen == self.generation else { return }
                     self.fail(CameraError.friendly(error, camera: camera), retry: !CameraError.isUnauthorized(error))
@@ -216,6 +251,7 @@ final class CameraFeed: ObservableObject {
 
     private func show(_ img: NSImage, gen: Int) {
         guard gen == generation, active else { return }
+        consecutiveFailures = 0
         image = img
         lastFrameAt = Date()
         analyze(img, gen: gen)
@@ -266,9 +302,11 @@ final class CameraFeed: ObservableObject {
         pacer = DetectionGate()
         gates = [:]
         guard retry else { return }
+        consecutiveFailures += 1
+        let delay = Self.retryDelay(afterFailures: consecutiveFailures)
         retryTask?.cancel()
         retryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.connectMJPEG()
         }
