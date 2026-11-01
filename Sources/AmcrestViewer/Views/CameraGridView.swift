@@ -8,6 +8,7 @@ struct CameraGridView: View {
     @Environment(\.openWindow) private var openWindow
 
     @AppStorage("gridColumns") private var columns = 2
+    @AppStorage("detectPeople") private var detectPeople = false
     @State private var showImporter = false
     @State private var importReport: ImportReport?
     @State private var editing: Camera?
@@ -44,6 +45,10 @@ struct CameraGridView: View {
                     .help("Importar a lista de câmeras de um arquivo .txt")
                 Button { creating = true } label: { Label("Adicionar", systemImage: "plus") }
                     .help("Adicionar uma câmera manualmente")
+
+                Toggle(isOn: $detectPeople) { Label("Detectar pessoas", systemImage: "figure.walk") }
+                    .toggleStyle(.button)
+                    .help("IA no seu Mac: marca as câmeras onde aparece uma pessoa. Nada vai para a nuvem.")
             }
         }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
@@ -103,19 +108,22 @@ struct CameraGridView: View {
 struct CameraTile: View {
     let camera: Camera
     @EnvironmentObject private var store: CameraStore
+    @AppStorage("detectPeople") private var detectPeople = false
     @StateObject private var feed = CameraFeed()
 
     var body: some View {
         FeedView(feed: feed, camera: camera)
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .onAppear { start() }
+            .onAppear { feed.detectPeople = detectPeople; start() }
             .onDisappear { feed.stop() }
             .onChange(of: camera) { _ in start() }
             .onChange(of: store.revision) { _ in start() }
+            .onChange(of: detectPeople) { feed.detectPeople = $0 }
     }
 
     private func start() {
+        feed.detectPeople = detectPeople
         feed.start(camera: camera, password: store.password(for: camera), quality: .sub)
     }
 }
@@ -146,6 +154,18 @@ struct FeedView: View {
             .foregroundStyle(.white)
             .padding(8)
         }
+        .overlay(alignment: .topTrailing) {
+            if feed.personPresent {
+                Label("Pessoa", systemImage: "figure.walk")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.red.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: feed.personPresent)
     }
 
     @ViewBuilder

@@ -57,6 +57,28 @@ final class CameraFeed: ObservableObject {
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastFrameAt: Date?
 
+    /// IA: há uma pessoa na cena agora (com janela de hold, para o selo não piscar).
+    @Published private(set) var personPresent = false
+
+    /// Liga/desliga a detecção de pessoas por IA nesta câmera.
+    var detectPeople = false {
+        didSet {
+            guard detectPeople != oldValue else { return }
+            // Invalida qualquer análise em voo: um resultado de antes da troca
+            // não pode reacender o selo depois de religar.
+            detectEpoch &+= 1
+            analyzing = false
+            personPresent = false
+            gate = DetectionGate()
+        }
+    }
+
+    private var gate = DetectionGate()
+    private var analyzing = false
+    /// Muda a cada vez que a detecção é ligada/desligada; descarta trabalho antigo.
+    private var detectEpoch = 0
+    private let detectQueue = DispatchQueue(label: "amcrest.detect", qos: .utility)
+
     private var camera: Camera?
     private var password: String?
     private var quality: StreamQuality = .sub
@@ -86,6 +108,10 @@ final class CameraFeed: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         status = .idle
+        personPresent = false
+        gate = DetectionGate()
+        analyzing = false
+        detectEpoch &+= 1
     }
 
     // MARK: - MJPEG
@@ -176,6 +202,32 @@ final class CameraFeed: ObservableObject {
         guard gen == generation, active else { return }
         image = img
         lastFrameAt = Date()
+        analyze(img, gen: gen)
+    }
+
+    // MARK: - IA (detecção no Mac, via Vision)
+
+    /// Roda o detector num quadro, com throttle, fora da main thread.
+    private func analyze(_ img: NSImage, gen: Int) {
+        guard detectPeople, !analyzing else { return }
+        guard gate.shouldAnalyze(now: Date()) else { return }
+        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        analyzing = true
+        let epoch = detectEpoch
+        detectQueue.async { [weak self] in
+            let count = PersonDetector.peopleCount(inCGImage: cg)
+            Task { @MainActor in self?.finishAnalysis(detected: count > 0, gen: gen, epoch: epoch) }
+        }
+    }
+
+    private func finishAnalysis(detected: Bool, gen: Int, epoch: Int) {
+        // A detecção foi ligada/desligada depois que esta análise começou: descarta,
+        // sem mexer no `analyzing` de uma análise mais nova que já esteja em voo.
+        guard epoch == detectEpoch else { return }
+        analyzing = false
+        guard gen == generation, active, detectPeople else { return }
+        let outcome = gate.record(detected: detected, now: Date())
+        personPresent = outcome.isPresent
     }
 
     private func fail(_ message: String, retry: Bool) {
@@ -185,6 +237,10 @@ final class CameraFeed: ObservableObject {
         pollTask = nil
         generation += 1
         status = .failed(message)
+        // Sem quadros novos, a janela de hold nunca é reavaliada: ao falhar/reconectar,
+        // limpa o estado para o selo não ficar preso numa detecção antiga.
+        personPresent = false
+        gate = DetectionGate()
         guard retry else { return }
         retryTask?.cancel()
         retryTask = Task { [weak self] in
