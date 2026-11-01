@@ -27,6 +27,8 @@ final class OnvifDiscoveryTests: XCTestCase {
         XCTAssertEqual(d.name, "IPC-Garagem")
         XCTAssertEqual(d.hardware, "IP2M-841")
         XCTAssertEqual(d.serial, "AMC01853PN52UCB543")
+        XCTAssertFalse(d.useHTTPS)
+        XCTAssertEqual(d.httpPort, 80)
         XCTAssertEqual(d.xaddr, "http://192.168.1.20/onvif/device_service")
         XCTAssertEqual(d.displayName, "IPC-Garagem")
     }
@@ -58,14 +60,53 @@ final class OnvifDiscoveryTests: XCTestCase {
 
     func testVariosXAddrsPegaOPrimeiroHTTP() {
         let xaddrs = "http://192.168.1.50/onvif/device_service https://192.168.1.50/onvif/device_service"
-        let r = OnvifDiscovery.firstHTTPHost(in: xaddrs)
+        let r = OnvifDiscovery.firstHTTPEndpoint(in: xaddrs)
         XCTAssertEqual(r?.host, "192.168.1.50")
+        XCTAssertEqual(r?.port, 80)
+        XCTAssertEqual(r?.useHTTPS, false)
         XCTAssertEqual(r?.xaddr, "http://192.168.1.50/onvif/device_service")
     }
 
     func testXAddrsSemHTTPFicaNil() {
-        XCTAssertNil(OnvifDiscovery.firstHTTPHost(in: "ftp://192.168.1.1/x"))
-        XCTAssertNil(OnvifDiscovery.firstHTTPHost(in: ""))
+        XCTAssertNil(OnvifDiscovery.firstHTTPEndpoint(in: "ftp://192.168.1.1/x"))
+        XCTAssertNil(OnvifDiscovery.firstHTTPEndpoint(in: ""))
+    }
+
+    func testHTTPSComPortaNaoPadraoEPreservado() {
+        let xml = """
+        <d:ProbeMatch xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+        <d:Scopes>onvif://www.onvif.org/name/Cam-Segura</d:Scopes>
+        <d:XAddrs>https://192.168.1.20:8443/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        """
+        let d = OnvifDiscovery.parseProbeMatch(xml)[0]
+        XCTAssertEqual(d.host, "192.168.1.20")
+        XCTAssertTrue(d.useHTTPS)
+        XCTAssertEqual(d.httpPort, 8443)
+    }
+
+    func testPrimeiroMatchSemScopesNaoRoubaDoSegundo() {
+        // Finding do Codex: coletar tags global e casar por índice embaralhava os campos.
+        // O primeiro aparelho não anuncia Scopes; não pode herdar nome/serial do segundo.
+        let xml = """
+        <d:Envelope xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+        <d:ProbeMatch>
+        <d:XAddrs>http://192.168.1.11/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        <d:ProbeMatch>
+        <d:Scopes>onvif://www.onvif.org/name/Cam-B onvif://www.onvif.org/serialNumber/SN-B</d:Scopes>
+        <d:XAddrs>http://192.168.1.12/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        </d:Envelope>
+        """
+        let devices = OnvifDiscovery.parseProbeMatch(xml)
+        XCTAssertEqual(devices.count, 2)
+        XCTAssertEqual(devices[0].host, "192.168.1.11")
+        XCTAssertNil(devices[0].name)
+        XCTAssertNil(devices[0].serial)
+        XCTAssertEqual(devices[1].host, "192.168.1.12")
+        XCTAssertEqual(devices[1].name, "Cam-B")
+        XCTAssertEqual(devices[1].serial, "SN-B")
     }
 
     func testDoisProbeMatchesNumDatagrama() {

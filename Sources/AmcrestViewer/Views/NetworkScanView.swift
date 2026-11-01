@@ -113,7 +113,9 @@ struct NetworkScanView: View {
 
     private func addSelected() {
         for device in scanner.devices where selected.contains(device.host) {
-            let camera = Camera(name: device.displayName, host: device.host, serialNumber: device.serial)
+            let camera = Camera(name: device.displayName, host: device.host,
+                                httpPort: device.httpPort, useHTTPS: device.useHTTPS,
+                                serialNumber: device.serial)
             store.save(camera, password: nil)
         }
         dismiss()

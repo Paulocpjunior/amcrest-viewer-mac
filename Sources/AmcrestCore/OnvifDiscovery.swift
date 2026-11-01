@@ -7,15 +7,20 @@ public struct DiscoveredDevice: Identifiable, Hashable, Sendable {
     public var name: String?         // nome anunciado (scope .../name/)
     public var hardware: String?     // modelo anunciado (scope .../hardware/)
     public var serial: String?       // número de série, se vier no anúncio
+    public var useHTTPS: Bool        // esquema anunciado no XAddr (https?)
+    public var httpPort: Int         // porta anunciada no XAddr (ou 80/443 por padrão)
     public var xaddr: String         // URL do serviço ONVIF (ex.: http://IP/onvif/device_service)
 
     public var id: String { host }
 
-    public init(host: String, name: String? = nil, hardware: String? = nil, serial: String? = nil, xaddr: String) {
+    public init(host: String, name: String? = nil, hardware: String? = nil, serial: String? = nil,
+                useHTTPS: Bool = false, httpPort: Int = 80, xaddr: String) {
         self.host = host
         self.name = name
         self.hardware = hardware
         self.serial = serial
+        self.useHTTPS = useHTTPS
+        self.httpPort = httpPort
         self.xaddr = xaddr
     }
 
@@ -54,24 +59,28 @@ public enum OnvifDiscovery {
         """
     }
 
-    /// Lê um datagrama de resposta (ProbeMatch) e devolve os aparelhos encontrados.
+    /// Lê um datagrama de resposta e devolve os aparelhos encontrados.
     /// Tolerante a prefixos de namespace diferentes (d:XAddrs, wsd:XAddrs, etc.).
+    /// Cada `<ProbeMatch>` é lido por inteiro, separadamente: assim um aparelho
+    /// que omita `Scopes` ou `XAddrs` não rouba o nome/serial de outro no mesmo datagrama.
     public static func parseProbeMatch(_ xml: String) -> [DiscoveredDevice] {
         var out: [DiscoveredDevice] = []
-        let xaddrsList = tagValues("XAddrs", in: xml)
-        let scopesList = tagValues("Scopes", in: xml)
-        // Normalmente um ProbeMatch por aparelho; casamos por índice, com folga.
-        let count = max(xaddrsList.count, 1)
-        for i in 0..<count {
-            let xaddrs = i < xaddrsList.count ? xaddrsList[i] : ""
-            guard let (host, xaddr) = firstHTTPHost(in: xaddrs) else { continue }
-            let scopes = i < scopesList.count ? scopesList[i].split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init) : []
+        // Um subárvore por aparelho; se o XML não trouxer <ProbeMatch>, trata tudo como um só.
+        var matches = tagValues("ProbeMatch", in: xml)
+        if matches.isEmpty { matches = [xml] }
+        for match in matches {
+            let xaddrs = tagValues("XAddrs", in: match).first ?? ""
+            guard let ep = firstHTTPEndpoint(in: xaddrs) else { continue }
+            let scopeRaw = tagValues("Scopes", in: match).first ?? ""
+            let scopes = scopeRaw.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init)
             out.append(DiscoveredDevice(
-                host: host,
+                host: ep.host,
                 name: scopeValue(scopes, key: "name"),
                 hardware: scopeValue(scopes, key: "hardware"),
                 serial: scopeValue(scopes, key: "serialNumber") ?? scopeValue(scopes, key: "serial"),
-                xaddr: xaddr
+                useHTTPS: ep.useHTTPS,
+                httpPort: ep.port,
+                xaddr: ep.xaddr
             ))
         }
         return out
@@ -79,13 +88,15 @@ public enum OnvifDiscovery {
 
     // MARK: - Ajudantes puros
 
-    /// Primeiro host http(s) numa lista de XAddrs separada por espaço.
-    public static func firstHTTPHost(in xaddrs: String) -> (host: String, xaddr: String)? {
+    /// Primeiro endereço http(s) numa lista de XAddrs separada por espaço,
+    /// com host, porta e esquema preservados (a câmera pode anunciar https ou porta diferente de 80).
+    public static func firstHTTPEndpoint(in xaddrs: String) -> (host: String, port: Int, useHTTPS: Bool, xaddr: String)? {
         for token in xaddrs.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }) {
             let s = String(token)
-            guard let comps = URLComponents(string: s), let h = comps.host,
-                  (comps.scheme == "http" || comps.scheme == "https") else { continue }
-            return (h, s)
+            guard let comps = URLComponents(string: s), let h = comps.host, let scheme = comps.scheme,
+                  (scheme == "http" || scheme == "https") else { continue }
+            let https = scheme == "https"
+            return (h, comps.port ?? (https ? 443 : 80), https, s)
         }
         return nil
     }
