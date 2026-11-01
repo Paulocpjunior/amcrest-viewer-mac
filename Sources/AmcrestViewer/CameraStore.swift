@@ -62,6 +62,10 @@ final class CameraStore: ObservableObject {
     @Published private(set) var revision = 0
     /// A janela de Administração está aberta: ela mostra os avisos, e a grade não repete.
     @Published var adminVisible = false
+    /// Procurando IPs novos pelo S/N.
+    @Published private(set) var relocating = false
+    /// Resumo da última atualização de IP pelo S/N (nil se nada mudou).
+    @Published var lastRelocation: String?
 
     private let fileURL: URL
 
@@ -112,6 +116,52 @@ final class CameraStore: ObservableObject {
             guard var current = camera(id: cam.id) else { continue }
             if !username.isEmpty { current.username = username }
             save(current, password: password)
+        }
+    }
+
+    /// Para cada aparelho com S/N cujo IP salvo não responde, procura o S/N na rede interna
+    /// (ONVIF + faixa de IP) e, se achar em outro IP, atualiza o cadastro. Todos os canais
+    /// do mesmo aparelho (mesmo IP antigo, ex.: NVR) mudam juntos. Devolve o que mudou.
+    @discardableResult
+    func relocateBySerial() async -> [String] {
+        guard !relocating else { return [] }
+        relocating = true
+        defer { relocating = false }
+        var moved: [String] = []
+        var seen = Set<String>()
+        for cam in cameras {
+            let sn = (cam.serialNumber ?? "").trimmingCharacters(in: .whitespaces)
+            let key = OnvifDiscovery.normalizeSerial(sn)
+            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            let pwd = password(for: cam)
+            if !cam.host.isEmpty, await Self.answers(cam, password: pwd) { continue }
+            guard let dev = await NetworkScanner.find(serial: sn, username: cam.username, password: pwd,
+                                                      preferredPort: cam.httpPort),
+                  dev.host != cam.host else { continue }
+            let oldHost = cam.host
+            for var c in cameras where c.id == cam.id
+                || (!oldHost.isEmpty && c.host == oldHost)
+                || OnvifDiscovery.normalizeSerial(c.serialNumber ?? "") == key {
+                c.host = dev.host
+                c.httpPort = dev.httpPort
+                c.useHTTPS = dev.useHTTPS
+                save(c, password: nil)
+            }
+            moved.append("\(cam.name): \(oldHost.isEmpty ? "sem IP" : oldHost) → \(dev.host)")
+        }
+        lastRelocation = moved.isEmpty ? nil : "IP atualizado pelo S/N: " + moved.joined(separator: "; ")
+        return moved
+    }
+
+    /// O aparelho responde no IP salvo? (Qualquer resposta HTTP conta, até senha errada.)
+    private static func answers(_ cam: Camera, password: String?) async -> Bool {
+        do {
+            _ = try await AmcrestClient(camera: cam, password: password).deviceType()
+            return true
+        } catch is CameraError {
+            return true
+        } catch {
+            return false
         }
     }
 

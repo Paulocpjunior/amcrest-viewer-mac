@@ -129,10 +129,39 @@ struct CameraEditorView: View {
                 testOK = true
                 testResult = "Conectado em \(cam.host). Modelo: \(model)"
             } catch {
+                // IP salvo não responde, mas tem S/N: procura o aparelho na rede interna e troca o IP.
+                if !(error is CameraError), !trimmedSerial.isEmpty, !Task.isCancelled,
+                   let moved = await relocated(from: cam) {
+                    camera = moved
+                    do {
+                        let model = try await AmcrestClient(camera: moved, password: effectivePassword).deviceType()
+                        testOK = true
+                        testResult = "Achei pelo S/N em \(moved.host) (o IP \(cam.host) não respondia). Modelo: \(model). Clique em Salvar."
+                    } catch {
+                        testOK = false
+                        testResult = "Achei pelo S/N em \(moved.host), mas: " + CameraError.friendly(error, camera: moved)
+                    }
+                    return
+                }
                 testOK = false
                 testResult = CameraError.friendly(error, camera: cam)
+                    + (trimmedSerial.isEmpty ? "" : " Também procurei o S/N \(trimmedSerial) em toda a rede interna do Mac e não achei.")
             }
         }
+    }
+
+    /// Procura o S/N na rede interna. Devolve a câmera com o IP novo, ou nil se não achou outro IP.
+    private func relocated(from cam: Camera) async -> Camera? {
+        resolving = true
+        defer { resolving = false }
+        guard let dev = await scanner.resolve(serial: trimmedSerial, username: cam.username,
+                                              password: effectivePassword, preferredPort: cam.httpPort),
+              dev.host != cam.host else { return nil }
+        var c = cam
+        c.host = dev.host
+        c.httpPort = dev.httpPort
+        c.useHTTPS = dev.useHTTPS
+        return c
     }
 
     private func save() {

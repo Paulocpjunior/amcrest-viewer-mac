@@ -59,7 +59,14 @@ final class NetworkScanner: ObservableObject {
     /// Usado pelo cadastro: informar o S/N e deixar o app achar o IP local sozinho.
     func resolve(serial: String, username: String = "admin", password: String? = nil,
                  preferredPort: Int? = nil, duration: TimeInterval = 4) async -> DiscoveredDevice? {
-        let onvif = await Self.probeAsync(duration: duration)
+        await Self.find(serial: serial, username: username, password: password,
+                        preferredPort: preferredPort, duration: duration)
+    }
+
+    /// Mesma busca, sem depender de uma tela (usada também para atualizar IPs pelo S/N).
+    nonisolated static func find(serial: String, username: String = "admin", password: String? = nil,
+                                 preferredPort: Int? = nil, duration: TimeInterval = 4) async -> DiscoveredDevice? {
+        let onvif = await probeAsync(duration: duration)
         if let hit = OnvifDiscovery.firstMatchingSerial(onvif, serial: serial) { return hit }
         return await LanHTTPSweeper.sweep(serial: serial, username: username, password: password,
                                           preferredPort: preferredPort).first

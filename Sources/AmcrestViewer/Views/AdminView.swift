@@ -153,6 +153,12 @@ struct AdminCamerasPane: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 280)
                 Spacer()
+                if store.relocating { ProgressView().controlSize(.small) }
+                Button { Task { await store.relocateBySerial() } } label: {
+                    Label("Atualizar IPs pelo S/N", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .help("Procura na rede interna os aparelhos com S/N que não respondem no IP salvo")
+                .disabled(store.relocating)
                 Button { onAdd() } label: { Label("Adicionar", systemImage: "plus") }
                 Button { if let c = selected.first { onEdit(c) } } label: { Label("Editar", systemImage: "pencil") }
                     .disabled(selected.count != 1)
@@ -160,6 +166,10 @@ struct AdminCamerasPane: View {
                     .disabled(selected.count != 1)
                 Button(role: .destructive) { onRemove(selected) } label: { Label("Remover", systemImage: "trash") }
                     .disabled(selected.isEmpty)
+            }
+
+            if let note = store.lastRelocation {
+                Label(note, systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             }
 
             if store.cameras.isEmpty {

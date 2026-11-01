@@ -71,7 +71,7 @@ enum CameraError: LocalizedError {
         guard let u = error as? URLError else { return error.localizedDescription }
         switch u.code {
         case .timedOut, .cannotConnectToHost, .networkConnectionLost:
-            return "Sem resposta de \(target). Confira se a câmera está ligada e se o Mac está na mesma rede ou com a VPN (Tailscale) ativa."
+            return "Sem resposta de \(target). Confira se a câmera está ligada e se o Mac está na mesma rede dela. Com o S/N no cadastro, o app procura o IP novo sozinho."
         case .cannotFindHost, .dnsLookupFailed:
             return "O nome \(camera.host) não foi encontrado. Confira a grafia ou use o IP."
         case .notConnectedToInternet:

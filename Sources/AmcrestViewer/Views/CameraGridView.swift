@@ -51,6 +51,20 @@ struct CameraGridView: View {
             }
         }
         .sheet(item: $editing) { CameraEditorView(camera: $0, isNew: false).environmentObject(store) }
+        // Ao abrir: aparelhos com S/N que não respondem no IP salvo são procurados na rede interna.
+        .task { await store.relocateBySerial() }
+        .overlay(alignment: .bottom) {
+            if let note = store.lastRelocation {
+                HStack {
+                    Label(note, systemImage: "arrow.triangle.2.circlepath")
+                    Button("OK") { store.lastRelocation = nil }
+                }
+                .font(.callout)
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .padding()
+            }
+        }
         .alert("Remover \(confirmRemove?.name ?? "")?", isPresented: Binding(
             get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })
         ) {
