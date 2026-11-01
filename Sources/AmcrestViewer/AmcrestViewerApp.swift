@@ -51,6 +51,9 @@ struct AdminCommands: Commands {
                 .keyboardShortcut(",", modifiers: .command)
         }
         CommandGroup(after: .appInfo) {
+            Button("Procurar atualizações…") {
+                NotificationCenter.default.post(name: .showUpdateSheet, object: nil)
+            }
             Button("Versões e novidades…") {
                 UserDefaults.standard.set(AdminSection.versions.rawValue, forKey: "adminSection")
                 openWindow(id: AdminWindow.id)

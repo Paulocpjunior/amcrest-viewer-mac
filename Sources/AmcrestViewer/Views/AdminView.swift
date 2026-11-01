@@ -4,12 +4,13 @@ import AmcrestCore
 
 /// Seções da janela de Administração.
 enum AdminSection: String, CaseIterable, Identifiable {
-    case cameras, add, credentials, hardware, versions
+    case status, cameras, add, credentials, hardware, versions
 
     var id: Self { self }
 
     var title: String {
         switch self {
+        case .status: return "Status"
         case .cameras: return "Câmeras"
         case .add: return "Adicionar câmeras"
         case .credentials: return "Usuário e senha"
@@ -20,6 +21,7 @@ enum AdminSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .status: return "waveform.path.ecg"
         case .cameras: return "video"
         case .add: return "plus.circle"
         case .credentials: return "key"
@@ -105,6 +107,8 @@ struct AdminView: View {
     @ViewBuilder
     private var detail: some View {
         switch AdminSection(rawValue: sectionRaw) ?? .cameras {
+        case .status:
+            AdminStatusPane(onUpdate: { NotificationCenter.default.post(name: .showUpdateSheet, object: nil) })
         case .cameras:
             AdminCamerasPane(
                 onAdd: { editor = EditorRequest(camera: Camera(name: "", host: ""), isNew: true) },
@@ -471,6 +475,59 @@ struct AdminHardwarePane: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Status
+
+/// Estado de cada câmera agora (ao vivo, snapshots, erro com o motivo) e do app.
+struct AdminStatusPane: View {
+    @EnvironmentObject private var store: CameraStore
+    let onUpdate: () -> Void
+    @State private var testing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AdminHeader(title: "Status",
+                        subtitle: CameraHealth.counts(store.cameras.map { store.health(of: $0) })
+                            .map { "\($0.1) \($0.0.label)" }.joined(separator: " · "))
+            HStack {
+                Button {
+                    testing = true
+                    Task { await store.testAll(); testing = false }
+                } label: { Label("Testar todas agora", systemImage: "bolt.horizontal") }
+                .disabled(testing || store.cameras.isEmpty)
+                if testing { ProgressView().controlSize(.small) }
+                Spacer()
+                Button { onUpdate() } label: {
+                    Label("v\(store.installedVersion) · \(store.updateStatus.summary)", systemImage: "arrow.down.app")
+                }
+            }
+            List(store.cameras) { cam in
+                let report = store.reports[cam.id]
+                HStack(alignment: .top, spacing: 10) {
+                    Circle().fill(StatusBar.color(report?.health ?? .unknown)).frame(width: 10, height: 10).padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(cam.name).font(.body.weight(.medium))
+                            Text(CameraAdmin.connectionLabel(cam)).font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Text((report?.health ?? .unknown).label).font(.caption.weight(.semibold))
+                        }
+                        if let msg = report?.message {
+                            Text(msg).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if report == nil {
+                            Text("Ainda sem dados: role a grade até ela ou clique em Testar todas agora.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+        }
+        .padding(20)
     }
 }
 

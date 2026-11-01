@@ -28,6 +28,11 @@ public struct Release: Identifiable, Hashable, Sendable {
 /// Ao lançar uma versão: acrescente no topo e atualize CFBundleShortVersionString no Info.plist.
 public enum ReleaseNotes {
     public static let all: [Release] = [
+        Release(version: "0.6.2", date: "2026-11-01", title: "Atualização e status", changes: [
+            "Janela de Atualização: versão instalada, se há versão nova publicada e as novidades. Abre sozinha depois de cada atualização e pelo menu Procurar atualizações….",
+            "Barra de status no rodapé da grade: quantas câmeras ao vivo, em snapshots, conectando e com erro, mais a versão do app.",
+            "Administração → Status: o estado de cada câmera com o motivo do erro e o botão Testar todas agora.",
+        ]),
         Release(version: "0.6.1", date: "2026-11-01", title: "Mensagens mais claras quando a imagem não vem", changes: [
             "Quando a câmera não responde ao login, o quadro mostra o motivo em vez de ficar preto.",
             "Se a câmera manda algo que não é imagem, o app avisa.",

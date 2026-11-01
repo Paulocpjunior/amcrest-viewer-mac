@@ -11,6 +11,9 @@ struct CameraGridView: View {
     @AppStorage("detectVehicles") private var detectVehicles = false
     @State private var editing: Camera?
     @State private var confirmRemove: Camera?
+    @State private var showUpdate = false
+    @State private var updatePrevious: String?
+    @AppStorage("lastSeenVersion") private var lastSeenVersion = ""
 
     var body: some View {
         Group {
@@ -51,6 +54,25 @@ struct CameraGridView: View {
             }
         }
         .sheet(item: $editing) { CameraEditorView(camera: $0, isNew: false).environmentObject(store) }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            StatusBar(onVersionTap: { openUpdate() },
+                      onStatusTap: {
+                          UserDefaults.standard.set(AdminSection.status.rawValue, forKey: "adminSection")
+                          openWindow(id: AdminWindow.id)
+                      })
+        }
+        .sheet(isPresented: $showUpdate) {
+            UpdateView(previousVersion: updatePrevious).environmentObject(store)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showUpdateSheet)) { _ in openUpdate() }
+        // Ao abrir: depois de uma atualização, mostra as novidades; verifica se há versão nova.
+        .task {
+            if AppUpdate.shouldShowWhatsNew(lastSeen: lastSeenVersion.isEmpty ? nil : lastSeenVersion,
+                                            installed: store.installedVersion) {
+                openUpdate()
+            }
+            await store.checkForUpdates()
+        }
         // Ao abrir: aparelhos com S/N que não respondem no IP salvo são procurados na rede interna.
         .task { await store.relocateBySerial() }
         .overlay(alignment: .bottom) {
@@ -81,6 +103,11 @@ struct CameraGridView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+    }
+
+    private func openUpdate() {
+        updatePrevious = lastSeenVersion.isEmpty ? nil : lastSeenVersion
+        showUpdate = true
     }
 
     private var emptyState: some View {
@@ -129,6 +156,17 @@ struct CameraTile: View {
             .onChange(of: store.revision) { _ in start() }
             .onChange(of: detectPeople) { _ in syncDetection() }
             .onChange(of: detectVehicles) { _ in syncDetection() }
+            .onChange(of: feed.status) { reportStatus($0) }
+    }
+
+    private func reportStatus(_ status: CameraFeed.Status) {
+        switch status {
+        case .live: store.report(camera.id, health: .live)
+        case .polling: store.report(camera.id, health: .polling, message: "Sem MJPEG: snapshots ~1/s")
+        case .connecting: store.report(camera.id, health: .connecting)
+        case .failed(let msg): store.report(camera.id, health: .failed, message: msg)
+        case .idle: break
+        }
     }
 
     private func syncDetection() {

@@ -67,6 +67,73 @@ final class CameraStore: ObservableObject {
     /// Resumo da última atualização de IP pelo S/N (nil se nada mudou).
     @Published var lastRelocation: String?
 
+    // MARK: Status das câmeras e do app
+
+    /// Estado de cada câmera, informado pelos quadros da grade (ou pelo "Testar todas").
+    struct FeedReport: Equatable {
+        var health: CameraHealth
+        var message: String?
+        var at: Date
+    }
+    @Published private(set) var reports: [UUID: FeedReport] = [:]
+
+    func report(_ id: UUID, health: CameraHealth, message: String? = nil) {
+        let new = FeedReport(health: health, message: message, at: Date())
+        if reports[id]?.health == new.health && reports[id]?.message == new.message { return }
+        reports[id] = new
+    }
+
+    func health(of camera: Camera) -> CameraHealth { reports[camera.id]?.health ?? .unknown }
+
+    /// Testa todas as câmeras agora (pedido leve: modelo do aparelho), em paralelo.
+    func testAll() async {
+        let jobs = cameras.map { ($0, password(for: $0)) }
+        for (cam, _) in jobs { report(cam.id, health: .connecting) }
+        await withTaskGroup(of: (UUID, CameraHealth, String?).self) { group in
+            for (cam, pwd) in jobs {
+                group.addTask {
+                    do {
+                        let model = try await AmcrestClient(camera: cam, password: pwd).deviceType()
+                        return (cam.id, .live, "Responde (\(model))")
+                    } catch {
+                        return (cam.id, .failed, CameraError.friendly(error, camera: cam))
+                    }
+                }
+            }
+            for await (id, h, msg) in group { report(id, health: h, message: msg) }
+        }
+    }
+
+    /// Versão instalada (do Info.plist do app; rodando por `swift run`, a do histórico).
+    var installedVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ReleaseNotes.latest.version
+    }
+    var installedBuild: String? { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String }
+
+    @Published private(set) var updateStatus: AppUpdate.Status = .unknown
+    @Published private(set) var updateCheckedAt: Date?
+
+    /// Compara com a versão publicada no GitHub (repositório público, só leitura).
+    func checkForUpdates() async {
+        if updateStatus == .checking { return }
+        updateStatus = .checking
+        var req = URLRequest(url: AppUpdate.publishedInfoPlistURL)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.timeoutInterval = 10
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let published = AppUpdate.version(fromInfoPlist: data) else {
+                updateStatus = .failed("resposta inesperada do GitHub")
+                return
+            }
+            updateStatus = AppUpdate.compare(installed: installedVersion, published: published)
+        } catch {
+            updateStatus = .failed("sem internet ou GitHub fora do ar")
+        }
+        updateCheckedAt = Date()
+    }
+
     private let fileURL: URL
 
     init() {
@@ -100,6 +167,7 @@ final class CameraStore: ObservableObject {
     }
 
     func remove(_ camera: Camera) {
+        reports[camera.id] = nil
         cameras.removeAll { $0.id == camera.id }
         Keychain.delete(account: camera.id.uuidString)
         persist()
