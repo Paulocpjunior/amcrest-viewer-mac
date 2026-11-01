@@ -248,6 +248,11 @@ final class CameraFeed: ObservableObject {
         pollTask = nil
         generation += 1
         status = .failed(message)
+        // Sem quadros novos, a janela de hold nunca é reavaliada: ao falhar/reconectar,
+        // limpa o estado para o selo não ficar preso numa detecção antiga.
+        present = []
+        pacer = DetectionGate()
+        gates = [:]
         guard retry else { return }
         retryTask?.cancel()
         retryTask = Task { [weak self] in
