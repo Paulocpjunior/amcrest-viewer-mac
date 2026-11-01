@@ -14,6 +14,7 @@ struct CameraGridView: View {
     @State private var importReport: ImportReport?
     @State private var editing: Camera?
     @State private var creating = false
+    @State private var scanning = false
     @State private var confirmRemove: Camera?
 
     var body: some View {
@@ -42,6 +43,8 @@ struct CameraGridView: View {
                 .pickerStyle(.segmented)
                 .help("Câmeras por linha")
 
+                Button { scanning = true } label: { Label("Procurar na rede", systemImage: "dot.radiowaves.left.and.right") }
+                    .help("Procurar câmeras na rede local (ONVIF). Nada vai para a nuvem.")
                 Button { showImporter = true } label: { Label("Importar .txt", systemImage: "square.and.arrow.down") }
                     .help("Importar a lista de câmeras de um arquivo .txt")
                 Button { creating = true } label: { Label("Adicionar", systemImage: "plus") }
@@ -63,6 +66,9 @@ struct CameraGridView: View {
         .sheet(item: $editing) { CameraEditorView(camera: $0, isNew: false).environmentObject(store) }
         .sheet(isPresented: $creating) {
             CameraEditorView(camera: Camera(name: "", host: ""), isNew: true).environmentObject(store)
+        }
+        .sheet(isPresented: $scanning) {
+            NetworkScanView().environmentObject(store)
         }
         .alert("Remover \(confirmRemove?.name ?? "")?", isPresented: Binding(
             get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })
@@ -88,7 +94,8 @@ struct CameraGridView: View {
             Text("Importe o .txt com os endereços das câmeras ou adicione uma manualmente.")
                 .foregroundStyle(.secondary)
             HStack {
-                Button("Importar .txt") { showImporter = true }.keyboardShortcut(.defaultAction)
+                Button("Procurar na rede") { scanning = true }.keyboardShortcut(.defaultAction)
+                Button("Importar .txt") { showImporter = true }
                 Button("Adicionar manualmente") { creating = true }
             }
         }

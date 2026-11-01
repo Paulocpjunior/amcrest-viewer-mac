@@ -1,0 +1,110 @@
+import XCTest
+@testable import AmcrestCore
+
+final class OnvifDiscoveryTests: XCTestCase {
+
+    /// ProbeMatch típico de uma câmera Amcrest/Dahua, com prefixos de namespace reais.
+    private let sample = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+    <SOAP-ENV:Body>
+    <d:ProbeMatches>
+    <d:ProbeMatch>
+    <d:Types>dn:NetworkVideoTransmitter</d:Types>
+    <d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/name/IPC-Garagem onvif://www.onvif.org/hardware/IP2M-841 onvif://www.onvif.org/serialNumber/AMC01853PN52UCB543</d:Scopes>
+    <d:XAddrs>http://192.168.1.20/onvif/device_service</d:XAddrs>
+    </d:ProbeMatch>
+    </d:ProbeMatches>
+    </SOAP-ENV:Body>
+    </SOAP-ENV:Envelope>
+    """
+
+    func testParseProbeMatchExtraiTudo() {
+        let devices = OnvifDiscovery.parseProbeMatch(sample)
+        XCTAssertEqual(devices.count, 1)
+        let d = devices[0]
+        XCTAssertEqual(d.host, "192.168.1.20")
+        XCTAssertEqual(d.name, "IPC-Garagem")
+        XCTAssertEqual(d.hardware, "IP2M-841")
+        XCTAssertEqual(d.serial, "AMC01853PN52UCB543")
+        XCTAssertEqual(d.xaddr, "http://192.168.1.20/onvif/device_service")
+        XCTAssertEqual(d.displayName, "IPC-Garagem")
+    }
+
+    func testNomePercentEncodedEDecodificado() {
+        let xml = """
+        <d:ProbeMatch xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+        <d:Scopes>onvif://www.onvif.org/name/Cam%20da%20Piscina</d:Scopes>
+        <d:XAddrs>http://10.0.1.72/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        """
+        let d = OnvifDiscovery.parseProbeMatch(xml)[0]
+        XCTAssertEqual(d.name, "Cam da Piscina")
+        XCTAssertEqual(d.host, "10.0.1.72")
+    }
+
+    func testSemNomeUsaHardwareDepoisHost() {
+        let xml = """
+        <d:ProbeMatch xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+        <d:Scopes>onvif://www.onvif.org/hardware/NVR4216</d:Scopes>
+        <d:XAddrs>http://192.168.20.146/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        """
+        let d = OnvifDiscovery.parseProbeMatch(xml)[0]
+        XCTAssertNil(d.name)
+        XCTAssertEqual(d.hardware, "NVR4216")
+        XCTAssertEqual(d.displayName, "NVR4216")
+    }
+
+    func testVariosXAddrsPegaOPrimeiroHTTP() {
+        let xaddrs = "http://192.168.1.50/onvif/device_service https://192.168.1.50/onvif/device_service"
+        let r = OnvifDiscovery.firstHTTPHost(in: xaddrs)
+        XCTAssertEqual(r?.host, "192.168.1.50")
+        XCTAssertEqual(r?.xaddr, "http://192.168.1.50/onvif/device_service")
+    }
+
+    func testXAddrsSemHTTPFicaNil() {
+        XCTAssertNil(OnvifDiscovery.firstHTTPHost(in: "ftp://192.168.1.1/x"))
+        XCTAssertNil(OnvifDiscovery.firstHTTPHost(in: ""))
+    }
+
+    func testDoisProbeMatchesNumDatagrama() {
+        let xml = """
+        <d:Envelope xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+        <d:ProbeMatch>
+        <d:Scopes>onvif://www.onvif.org/name/Cam-A</d:Scopes>
+        <d:XAddrs>http://192.168.1.11/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        <d:ProbeMatch>
+        <d:Scopes>onvif://www.onvif.org/name/Cam-B</d:Scopes>
+        <d:XAddrs>http://192.168.1.12/onvif/device_service</d:XAddrs>
+        </d:ProbeMatch>
+        </d:Envelope>
+        """
+        let devices = OnvifDiscovery.parseProbeMatch(xml)
+        XCTAssertEqual(devices.map(\.host), ["192.168.1.11", "192.168.1.12"])
+        XCTAssertEqual(devices.map(\.name), ["Cam-A", "Cam-B"])
+    }
+
+    func testLixoNaoQuebra() {
+        XCTAssertTrue(OnvifDiscovery.parseProbeMatch("não é xml").isEmpty)
+        XCTAssertTrue(OnvifDiscovery.parseProbeMatch("").isEmpty)
+    }
+
+    func testProbeMessageTemTiposEMessageID() {
+        let msg = OnvifDiscovery.probeMessage(messageID: "urn:uuid:abc-123")
+        XCTAssertTrue(msg.contains("urn:uuid:abc-123"))
+        XCTAssertTrue(msg.contains("dn:NetworkVideoTransmitter"))
+        XCTAssertTrue(msg.contains("http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe"))
+        // As declarações de namespace precisam ficar na mesma linha (continuação com "\"),
+        // sem quebra de linha engolindo o espaço entre os atributos.
+        XCTAssertTrue(msg.contains("soap-envelope\" xmlns:w="))
+        XCTAssertTrue(msg.contains("xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\""))
+    }
+
+    func testScopeValueDesconhecidoFicaNil() {
+        let scopes = ["onvif://www.onvif.org/name/X"]
+        XCTAssertNil(OnvifDiscovery.scopeValue(scopes, key: "hardware"))
+        XCTAssertEqual(OnvifDiscovery.scopeValue(scopes, key: "name"), "X")
+    }
+}
