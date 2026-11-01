@@ -36,3 +36,21 @@ final class LanSweepTests: XCTestCase {
         XCTAssertNil(LanSweep.serialFromAuthHeader("Digest nonce=1"))
     }
 }
+
+final class LanSubnetTests: XCTestCase {
+    func testSubnet24() {
+        XCTAssertEqual(LanSweep.subnet24("192.168.20.146"), "192.168.20")
+        XCTAssertEqual(LanSweep.subnet24("10.0.1.146"), "10.0.1")
+        XCTAssertNil(LanSweep.subnet24("nao-ip"))
+        XCTAssertNil(LanSweep.subnet24("192.168.20"))
+    }
+
+    func testSameSubnetAndReachable() {
+        XCTAssertTrue(LanSweep.sameSubnet24("192.168.20.146", "192.168.20.1"))
+        XCTAssertFalse(LanSweep.sameSubnet24("192.168.20.146", "10.0.1.146"))
+        // Mac em 192.168.20.x não alcança NVR em 10.0.1.x
+        XCTAssertFalse(LanSweep.isReachableLocally("10.0.1.146", localIPs: ["192.168.20.149"]))
+        XCTAssertTrue(LanSweep.isReachableLocally("192.168.20.146", localIPs: ["192.168.20.149"]))
+        XCTAssertFalse(LanSweep.isReachableLocally("10.0.1.146", localIPs: []))
+    }
+}

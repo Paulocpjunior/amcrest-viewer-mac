@@ -152,7 +152,9 @@ final class CameraFeed: ObservableObject {
         status = .connecting
 
         let delegate = MJPEGSessionDelegate()
-        delegate.credential = AuthHandling.credential(for: camera, password: password)
+        // O request do MJPEG já leva o login no cabeçalho (authorizedRequest, abaixo). Sem credencial
+        // no delegate, a câmera não recebe uma 2ª tentativa de login se a 1ª for recusada.
+        delegate.credential = nil
         delegate.onResponse = { [weak self] http in
             let isMultipart = http.mimeType?.lowercased().hasPrefix("multipart/") ?? false
             let ok = http.statusCode == 200 && isMultipart

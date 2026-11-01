@@ -28,6 +28,12 @@ public struct Release: Identifiable, Hashable, Sendable {
 /// Ao lançar uma versão: acrescente no topo e atualize CFBundleShortVersionString no Info.plist.
 public enum ReleaseNotes {
     public static let all: [Release] = [
+        Release(version: "0.6.4", date: "2026-11-01", title: "Menos bloqueios e mensagens certas", changes: [
+            "Login não vai mais em dobro: quando a senha era recusada, o app tentava duas vezes e cada erro contava 2× para o bloqueio de 30 min da câmera. Agora vai só uma tentativa.",
+            "Câmera em outra rede agora diz isso com clareza (\"está na rede 10.0.1.x e o Mac está na 192.168.20.x\") em vez de sugerir senha errada.",
+            "Testar todas agora só confere a senha nas câmeras de formato padrão; nas de outro formato avisa sem gastar uma tentativa errada.",
+            "Câmera lenta para gerar a imagem agora tem 15 s de espera (antes 8 s), para não aparecer como erro de login à toa.",
+        ]),
         Release(version: "0.6.3", date: "2026-11-01", title: "Login nas câmeras corrigido", changes: [
             "O app agora faz o login Digest na câmera ele mesmo, em vez de deixar o macOS negociar. Corrige câmeras na mesma rede que abriam no Safari mas ficavam sem imagem no app.",
             "Se a câmera pede login e some depois de receber a senha, o app diz isso, em vez de \"não respondeu a tempo\".",

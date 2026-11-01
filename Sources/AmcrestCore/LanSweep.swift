@@ -45,4 +45,23 @@ public enum LanSweep {
         let sn = realm.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
         return sn.isEmpty ? nil : sn
     }
+
+    /// Prefixo /24 de um IPv4 ("192.168.20.146" -> "192.168.20"), ou nil se não for IPv4.
+    public static func subnet24(_ ip: String) -> String? {
+        let p = ip.split(separator: ".")
+        guard p.count == 4, p.allSatisfy({ UInt8($0) != nil }) else { return nil }
+        return "\(p[0]).\(p[1]).\(p[2])"
+    }
+
+    /// true se os dois IPs estão no mesmo /24.
+    public static func sameSubnet24(_ a: String, _ b: String) -> Bool {
+        guard let sa = subnet24(a), let sb = subnet24(b) else { return false }
+        return sa == sb
+    }
+
+    /// true se `ip` cai no /24 de alguma das interfaces locais.
+    public static func isReachableLocally(_ ip: String, localIPs: [String]) -> Bool {
+        guard let target = subnet24(ip) else { return false }
+        return localIPs.contains { subnet24($0) == target }
+    }
 }

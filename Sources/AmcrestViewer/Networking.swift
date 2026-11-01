@@ -75,7 +75,13 @@ enum CameraError: LocalizedError {
         guard let u = error as? URLError else { return error.localizedDescription }
         switch u.code {
         case .timedOut where camera.host.hasPrefix("192.168.") || camera.host.hasPrefix("10.") || camera.host.hasPrefix("172."):
-            return "\(target) não respondeu a tempo. Se a câmera está em outro local, ela só abre na rede dela. Se está nesta rede e ligada, pode ter bloqueado o login por tentativas com senha errada (a Amcrest bloqueia até 30 min): feche o app, confira a senha em http://\(camera.host) no Safari e abra de novo."
+            let localIPs = NetworkScanner.activeIPv4Interfaces().map(\.ip)
+            if !localIPs.isEmpty, !LanSweep.isReachableLocally(camera.host, localIPs: localIPs) {
+                let minha = localIPs.compactMap(LanSweep.subnet24).first.map { "\($0).x" } ?? "outra faixa"
+                let dela = LanSweep.subnet24(camera.host).map { "\($0).x" } ?? camera.host
+                return "A câmera está na rede \(dela) e este Mac está na rede \(minha). Ela só abre quando o Mac estiver no mesmo local (ou por VPN até lá). Isto não é senha nem bloqueio."
+            }
+            return "\(target) não respondeu a tempo. Se está nesta rede e ligada, pode ter bloqueado o login por tentativas com senha errada (a Amcrest bloqueia até 30 min): feche o app, confira a senha em http://\(camera.host) no Safari e abra de novo."
         case .timedOut, .cannotConnectToHost, .networkConnectionLost:
             return "Sem resposta de \(target). Confira se a câmera está ligada e se o Mac está na mesma rede dela. Com o S/N no cadastro, o app procura o IP novo sozinho."
         case .cannotFindHost, .dnsLookupFailed:
@@ -109,7 +115,8 @@ struct AmcrestClient {
     let camera: Camera
     let password: String?
 
-    private static let session = URLSession(configuration: AuthHandling.makeConfiguration(requestTimeout: 8))
+    // 15 s: algumas câmeras demoram para gerar o snapshot; 8 s dava falso "não respondeu ao login".
+    private static let session = URLSession(configuration: AuthHandling.makeConfiguration(requestTimeout: 15))
 
     func get(_ url: URL?) async throws -> (Data, HTTPURLResponse) {
         guard let url else { throw CameraError.invalidAddress }
@@ -183,8 +190,8 @@ struct AmcrestClient {
     /// Baixa um arquivo gravado para `destination` (substitui se já existir).
     func download(_ file: RecordingFile, to destination: URL) async throws {
         guard let url = AmcrestEndpoints.loadFile(camera, path: file.filePath) else { throw CameraError.invalidAddress }
-        let request = try await CameraHTTP.authorizedRequest(url, camera: camera, password: password, session: Self.session)
-        let delegate = TaskAuthDelegate(credential: AuthHandling.credential(for: camera, password: password))
+        let request = try await CameraHTTP.authorizedRequest(url, camera: camera, password: password, session: Self.session, fresh: true)
+        let delegate = TaskAuthDelegate(credential: nil)
         let (tmp, response) = try await Self.session.download(for: request, delegate: delegate)
         guard let http = response as? HTTPURLResponse else { throw CameraError.unexpectedContent }
         if http.statusCode == 401 { throw CameraError.unauthorized }
@@ -294,8 +301,9 @@ enum CameraHTTP {
         // 1º contato: sem login, para receber o desafio (ou a resposta, se a câmera não pedir login).
         var challenge: DigestChallenge?
         var nc = 1
+        var fromCache = false
         if let entry = await cache.next(k) {
-            challenge = entry.0; nc = entry.1
+            challenge = entry.0; nc = entry.1; fromCache = true
         } else {
             let (data, http) = try await plain(URLRequest(url: url), session)
             guard http.statusCode == 401 else { return (data, http) }
@@ -317,8 +325,11 @@ enum CameraHTTP {
         let (data, http) = try await authed(request, session)
         guard http.statusCode == 401 else { return (data, http) }
 
-        // Desafio vencido (nonce novo) ou senha errada: tenta uma vez com o desafio que veio agora.
+        // 401 após o login. Com desafio recém-obtido nesta chamada, isso é senha recusada:
+        // devolve sem repetir, para uma senha errada contar só UMA tentativa (bloqueio de 30 min).
         await cache.drop(k)
+        guard fromCache else { return (data, http) }
+        // Desafio vinha do cache: o nonce pode ter vencido. Tenta uma vez com o desafio novo.
         guard let value = http.value(forHTTPHeaderField: "WWW-Authenticate"),
               let fresh = DigestChallenge.parse(value) else { return (data, http) }
         let n2 = await cache.store(k, fresh)
@@ -373,12 +384,16 @@ enum WebLoginCheck {
             }
             return nil
         }
+        let encryption = (params["encryption"] as? String) ?? "Default"
+        guard encryption.caseInsensitiveCompare("Default") == .orderedSame else {
+            return .other("a câmera usa o formato de senha \(encryption); confira a senha em http://\(camera.host) no Safari")
+        }
         let session1 = first["session"]
         let hash = WebLogin.passwordHash(username: camera.username, password: password, realm: realm, random: random)
         var body: [String: Any] = [
             "method": "global.login", "id": 2,
             "params": ["userName": camera.username, "password": hash, "clientType": "Web3.0",
-                       "loginType": "Direct", "authorityType": params["encryption"] as? String ?? "Default"],
+                       "loginType": "Direct", "authorityType": encryption],
         ]
         if let session1 { body["session"] = session1 }
         guard let second = await post("RPC2_Login", body) else { return .other("sem resposta ao login") }
