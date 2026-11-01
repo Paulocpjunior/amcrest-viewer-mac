@@ -14,6 +14,7 @@ struct CameraEditorView: View {
     @State private var testOK = false
     @State private var testing = false
     @State private var resolving = false
+    @State private var work: Task<Void, Never>?
     @StateObject private var scanner = NetworkScanner()
 
     /// O cadastro pode ser por endereço OU por S/N (o app acha o IP na rede).
@@ -66,6 +67,7 @@ struct CameraEditorView: View {
         }
         .padding(20)
         .frame(width: 460)
+        .onDisappear { work?.cancel() }
     }
 
     private var validationError: String? {
@@ -104,8 +106,9 @@ struct CameraEditorView: View {
 
     private func test() {
         testResult = nil
-        Task {
+        work = Task {
             guard let cam = await resolvedCamera() else { return }
+            if Task.isCancelled { return }
             testing = true
             defer { testing = false }
             camera = cam  // reflete o IP achado na tela
@@ -123,8 +126,10 @@ struct CameraEditorView: View {
 
     private func save() {
         testResult = nil
-        Task {
+        work = Task {
             guard let cam = await resolvedCamera() else { return }
+            // Se o editor já foi fechado (ex.: Cancelar durante a busca), não salva.
+            if Task.isCancelled { return }
             camera = cam
             store.save(cam, password: password.isEmpty ? nil : password)
             dismiss()
