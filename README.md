@@ -21,7 +21,7 @@ Não usa a nuvem nem o P2P da Amcrest, e não depende de bibliotecas externas.
   - **abrir no VLC**: RTSP principal, em alta qualidade e com áudio.
   - **presets com nome**: lista os presets salvos na câmera e grava a posição atual num número, com o nome que você digitar (o nome fica guardado no app);
   - **gravações do microSD**: escolha o dia, veja os vídeos (início, fim, duração, movimento ou contínua), assista ou baixe o `.dav` para `Filmes/Amcrest`. **Assistir precisa do [VLC](https://www.videolan.org/vlc/download-macos.html)** instalado; baixar funciona sem ele.
-- **IA no seu Mac — detectar pessoas:** o botão "Detectar pessoas" na barra liga a análise das imagens com o Vision da Apple. A câmera onde aparece alguém ganha um selo "Pessoa". Tudo roda localmente, nada vai para a nuvem. Detecção de veículo entra a seguir, com um modelo Core ML.
+- **IA no seu Mac — detectar pessoas e veículos:** os botões "Detectar pessoas" e "Detectar veículos" na barra ligam a análise das imagens com o Vision da Apple. A câmera onde aparece alguém ganha um selo "Pessoa"; onde aparece um carro, caminhão, moto etc., um selo "Veículo". Tudo roda localmente, nada vai para a nuvem e não precisa baixar modelo.
 - **Senhas no Keychain** do macOS. Nunca ficam em arquivo.
 - **Testar conexão** no cadastro: mostra o modelo da câmera ou diz o que corrigir.
 - **Se a câmera não oferecer MJPEG** naquele fluxo, o app passa a buscar snapshots (cerca de 1 por segundo) e avisa na tela ("snapshots ~1/s"), para ninguém confundir com vídeo contínuo.

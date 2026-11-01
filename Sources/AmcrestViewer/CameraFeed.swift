@@ -57,23 +57,38 @@ final class CameraFeed: ObservableObject {
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastFrameAt: Date?
 
-    /// IA: há uma pessoa na cena agora (com janela de hold, para o selo não piscar).
-    @Published private(set) var personPresent = false
+    /// IA: o que está na cena agora (pessoa, veículo), com janela de hold por tipo,
+    /// para o selo não piscar quando um quadro falha a detecção.
+    @Published private(set) var present: Set<DetectionKind> = []
 
-    /// Liga/desliga a detecção de pessoas por IA nesta câmera.
-    var detectPeople = false {
+    /// Conveniências para a interface.
+    var personPresent: Bool { present.contains(.person) }
+    var vehiclePresent: Bool { present.contains(.vehicle) }
+
+    /// O que a IA deve procurar nesta câmera. Vazio = IA desligada.
+    var detectKinds: Set<DetectionKind> = [] {
         didSet {
-            guard detectPeople != oldValue else { return }
+            guard detectKinds != oldValue else { return }
             // Invalida qualquer análise em voo: um resultado de antes da troca
-            // não pode reacender o selo depois de religar.
+            // não pode reacender um selo depois de religar.
             detectEpoch &+= 1
             analyzing = false
-            personPresent = false
-            gate = DetectionGate()
+            for kind in oldValue.subtracting(detectKinds) { gates[kind] = nil }
+            present = present.intersection(detectKinds)
         }
     }
 
-    private var gate = DetectionGate()
+    /// Liga/desliga os detectores a partir dos botões da interface.
+    func setDetection(people: Bool, vehicles: Bool) {
+        var kinds: Set<DetectionKind> = []
+        if people { kinds.insert(.person) }
+        if vehicles { kinds.insert(.vehicle) }
+        detectKinds = kinds
+    }
+
+    /// Ritmo da análise (usa só o throttle do gate) e um gate por tipo para o hold.
+    private var pacer = DetectionGate()
+    private var gates: [DetectionKind: DetectionGate] = [:]
     private var analyzing = false
     /// Muda a cada vez que a detecção é ligada/desligada; descarta trabalho antigo.
     private var detectEpoch = 0
@@ -108,8 +123,9 @@ final class CameraFeed: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         status = .idle
-        personPresent = false
-        gate = DetectionGate()
+        present = []
+        pacer = DetectionGate()
+        gates = [:]
         analyzing = false
         detectEpoch &+= 1
     }
@@ -207,27 +223,34 @@ final class CameraFeed: ObservableObject {
 
     // MARK: - IA (detecção no Mac, via Vision)
 
-    /// Roda o detector num quadro, com throttle, fora da main thread.
+    /// Roda os detectores num quadro, com throttle, fora da main thread.
     private func analyze(_ img: NSImage, gen: Int) {
-        guard detectPeople, !analyzing else { return }
-        guard gate.shouldAnalyze(now: Date()) else { return }
+        guard !detectKinds.isEmpty, !analyzing else { return }
+        guard pacer.shouldAnalyze(now: Date()) else { return }
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let kinds = detectKinds
         analyzing = true
         let epoch = detectEpoch
         detectQueue.async { [weak self] in
-            let count = PersonDetector.peopleCount(inCGImage: cg)
-            Task { @MainActor in self?.finishAnalysis(detected: count > 0, gen: gen, epoch: epoch) }
+            let found = SceneDetector.detect(inCGImage: cg, kinds: kinds)
+            Task { @MainActor in self?.finishAnalysis(found: found, requested: kinds, gen: gen, epoch: epoch) }
         }
     }
 
-    private func finishAnalysis(detected: Bool, gen: Int, epoch: Int) {
-        // A detecção foi ligada/desligada depois que esta análise começou: descarta,
-        // sem mexer no `analyzing` de uma análise mais nova que já esteja em voo.
+    private func finishAnalysis(found: Set<DetectionKind>, requested: Set<DetectionKind>, gen: Int, epoch: Int) {
+        // A detecção mudou depois que esta análise começou: descarta, sem mexer
+        // no `analyzing` de uma análise mais nova que já esteja em voo.
         guard epoch == detectEpoch else { return }
         analyzing = false
-        guard gen == generation, active, detectPeople else { return }
-        let outcome = gate.record(detected: detected, now: Date())
-        personPresent = outcome.isPresent
+        guard gen == generation, active else { return }
+        let now = Date()
+        var current: Set<DetectionKind> = []
+        for kind in requested where detectKinds.contains(kind) {
+            var gate = gates[kind] ?? DetectionGate()
+            if gate.record(detected: found.contains(kind), now: now).isPresent { current.insert(kind) }
+            gates[kind] = gate
+        }
+        present = current
     }
 
     private func fail(_ message: String, retry: Bool) {
@@ -239,8 +262,9 @@ final class CameraFeed: ObservableObject {
         status = .failed(message)
         // Sem quadros novos, a janela de hold nunca é reavaliada: ao falhar/reconectar,
         // limpa o estado para o selo não ficar preso numa detecção antiga.
-        personPresent = false
-        gate = DetectionGate()
+        present = []
+        pacer = DetectionGate()
+        gates = [:]
         guard retry else { return }
         retryTask?.cancel()
         retryTask = Task { [weak self] in

@@ -84,3 +84,35 @@ public struct DetectionGate: Sendable {
         return Outcome(isPresent: present, raisedEvent: raised)
     }
 }
+
+/// Decide se um rótulo de classificação do Vision corresponde a um veículo.
+///
+/// Lógica pura (sem Vision), para poder ser testada. O `VNClassifyImageRequest`
+/// devolve identificadores como `car`, `sports_car`, `wheeled_vehicle`,
+/// `pickup_truck`. Comparamos por *token* (partes separadas por `_` ou espaço),
+/// e não por substring, para não confundir, por exemplo, `scarf` com `car`.
+public enum VehicleTaxonomy {
+    /// Tokens que indicam um veículo a motor (carro, caminhão, ônibus, moto, van…).
+    /// Bicicleta fica de fora de propósito: o foco é veículo motorizado.
+    public static let tokens: Set<String> = [
+        "car", "cars",
+        "truck", "trucks",
+        "bus", "buses",
+        "van", "vans",
+        "vehicle", "vehicles",
+        "motorcycle", "motorbike", "moped",
+        "suv", "jeep", "pickup",
+        "taxi", "cab",
+        "sedan", "hatchback", "convertible", "coupe", "minivan",
+        "ambulance",
+    ]
+
+    /// `true` se o identificador tiver algum token de veículo.
+    public static func isVehicle(_ identifier: String) -> Bool {
+        let parts = identifier
+            .lowercased()
+            .split(whereSeparator: { $0 == "_" || $0 == " " || $0 == "-" })
+            .map(String.init)
+        return parts.contains { tokens.contains($0) }
+    }
+}
