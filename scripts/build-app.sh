@@ -14,6 +14,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/AmcrestViewer" "$APP/Contents/MacOS/AmcrestViewer"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
+# Remove atributos estendidos (resource forks/Finder info que o iCloud/Documents
+# adiciona) antes de assinar: senão o codesign recusa com "detritus not allowed".
+xattr -cr "$APP"
+
 # Assinatura local (ad hoc): basta para rodar neste Mac.
 codesign --force --deep --sign - "$APP"
 
