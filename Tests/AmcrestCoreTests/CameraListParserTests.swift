@@ -128,6 +128,16 @@ final class CameraListParserTests: XCTestCase {
         XCTAssertTrue(r.rejected[0].reason.contains("S/N AMC01858719C691882"))
     }
 
+    func testNomeTipoSNSeguidoDeIPNaoViraSerial() {
+        // "SN 192.168.1.10": "SN" é o nome da câmera, não etiqueta de S/N.
+        // O IP não pode ser consumido como serial (regressão apontada na revisão).
+        let r = CameraListParser.parse("SN 192.168.1.10")
+        XCTAssertEqual(r.rejected.count, 0)
+        XCTAssertEqual(r.cameras.count, 1)
+        XCTAssertEqual(r.cameras[0].camera.host, "192.168.1.10")
+        XCTAssertNil(r.cameras[0].camera.serialNumber)
+    }
+
     func testListaAntigaSemSerialAindaAbre() throws {
         let json = #"[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Garagem","host":"192.168.1.10","httpPort":80,"rtspPort":554,"channel":1,"username":"admin","useHTTPS":false}]"#
         let cams = try JSONDecoder().decode([Camera].self, from: Data(json.utf8))

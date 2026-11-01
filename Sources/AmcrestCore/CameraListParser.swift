@@ -94,7 +94,7 @@ public enum CameraListParser {
                 explicitChannel = ch
             } else if let sn = serialPrefix(t) {
                 serial = sn
-            } else if serialKeywords.contains(lower), i + 1 < tokens.count {
+            } else if serialKeywords.contains(lower), i + 1 < tokens.count, !isAddressToken(tokens[i + 1]) {
                 serial = tokens[i + 1]
                 i += 1
             } else if ["usuario", "usuário", "user", "login"].contains(lower), i + 1 < tokens.count {
@@ -213,6 +213,14 @@ public enum CameraListParser {
     }
 
     static let serialKeywords: Set<String> = ["sn", "s/n", "sn:", "s/n:", "serial", "serial:"]
+
+    /// O token é um endereço (IP/host[:porta] ou URL rtsp/http)? Usado para não
+    /// confundir uma câmera chamada "SN" seguida do IP com uma etiqueta de S/N.
+    static func isAddressToken(_ token: String) -> Bool {
+        let lower = token.lowercased()
+        if lower.hasPrefix("rtsp://") || lower.hasPrefix("http://") || lower.hasPrefix("https://") { return true }
+        return hostPort(token) != nil
+    }
 
     /// "sn:AMC0185..." ou "s/n:AMC0185..." num token só.
     static func serialPrefix(_ token: String) -> String? {
