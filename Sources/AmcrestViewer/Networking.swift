@@ -70,6 +70,8 @@ enum CameraError: LocalizedError {
         let target = "\(camera.host):\(camera.httpPort)"
         guard let u = error as? URLError else { return error.localizedDescription }
         switch u.code {
+        case .timedOut where camera.host.hasPrefix("192.168.") || camera.host.hasPrefix("10.") || camera.host.hasPrefix("172."):
+            return "\(target) não respondeu a tempo. Se a câmera está em outro local, ela só abre na rede dela. Se está nesta rede e ligada, pode ter bloqueado o login por tentativas com senha errada (a Amcrest bloqueia até 30 min): feche o app, confira a senha em http://\(camera.host) no Safari e abra de novo."
         case .timedOut, .cannotConnectToHost, .networkConnectionLost:
             return "Sem resposta de \(target). Confira se a câmera está ligada e se o Mac está na mesma rede dela. Com o S/N no cadastro, o app procura o IP novo sozinho."
         case .cannotFindHost, .dnsLookupFailed:
