@@ -11,6 +11,9 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
     public var channel: Int
     public var username: String
     public var useHTTPS: Bool
+    /// Número de série (S/N) da câmera, como aparece nos apps da Amcrest. Só informativo por enquanto:
+    /// o app conecta pelo endereço. Listas antigas (sem este campo) continuam abrindo.
+    public var serialNumber: String?
 
     public init(
         id: UUID = UUID(),
@@ -20,7 +23,8 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
         rtspPort: Int = 554,
         channel: Int = 1,
         username: String = "admin",
-        useHTTPS: Bool = false
+        useHTTPS: Bool = false,
+        serialNumber: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -30,6 +34,7 @@ public struct Camera: Codable, Identifiable, Hashable, Sendable {
         self.channel = channel
         self.username = username
         self.useHTTPS = useHTTPS
+        self.serialNumber = serialNumber
     }
 }
 
