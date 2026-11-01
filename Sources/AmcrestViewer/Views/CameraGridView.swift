@@ -9,6 +9,7 @@ struct CameraGridView: View {
 
     @AppStorage("gridColumns") private var columns = 2
     @AppStorage("detectPeople") private var detectPeople = false
+    @AppStorage("detectVehicles") private var detectVehicles = false
     @State private var showImporter = false
     @State private var importReport: ImportReport?
     @State private var editing: Camera?
@@ -49,6 +50,10 @@ struct CameraGridView: View {
                 Toggle(isOn: $detectPeople) { Label("Detectar pessoas", systemImage: "figure.walk") }
                     .toggleStyle(.button)
                     .help("IA no seu Mac: marca as câmeras onde aparece uma pessoa. Nada vai para a nuvem.")
+
+                Toggle(isOn: $detectVehicles) { Label("Detectar veículos", systemImage: "car.fill") }
+                    .toggleStyle(.button)
+                    .help("IA no seu Mac: marca as câmeras onde aparece um veículo. Nada vai para a nuvem.")
             }
         }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
@@ -109,21 +114,27 @@ struct CameraTile: View {
     let camera: Camera
     @EnvironmentObject private var store: CameraStore
     @AppStorage("detectPeople") private var detectPeople = false
+    @AppStorage("detectVehicles") private var detectVehicles = false
     @StateObject private var feed = CameraFeed()
 
     var body: some View {
         FeedView(feed: feed, camera: camera)
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .onAppear { feed.detectPeople = detectPeople; start() }
+            .onAppear { start() }
             .onDisappear { feed.stop() }
             .onChange(of: camera) { _ in start() }
             .onChange(of: store.revision) { _ in start() }
-            .onChange(of: detectPeople) { feed.detectPeople = $0 }
+            .onChange(of: detectPeople) { _ in syncDetection() }
+            .onChange(of: detectVehicles) { _ in syncDetection() }
+    }
+
+    private func syncDetection() {
+        feed.setDetection(people: detectPeople, vehicles: detectVehicles)
     }
 
     private func start() {
-        feed.detectPeople = detectPeople
+        syncDetection()
         feed.start(camera: camera, password: store.password(for: camera), quality: .sub)
     }
 }
@@ -155,17 +166,22 @@ struct FeedView: View {
             .padding(8)
         }
         .overlay(alignment: .topTrailing) {
-            if feed.personPresent {
-                Label("Pessoa", systemImage: "figure.walk")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.red.opacity(0.85), in: Capsule())
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .transition(.opacity)
+            VStack(alignment: .trailing, spacing: 4) {
+                if feed.personPresent { badge("Pessoa", "figure.walk", .red) }
+                if feed.vehiclePresent { badge("Veículo", "car.fill", .blue) }
             }
+            .padding(8)
         }
-        .animation(.easeInOut(duration: 0.2), value: feed.personPresent)
+        .animation(.easeInOut(duration: 0.2), value: feed.present)
+    }
+
+    private func badge(_ text: String, _ symbol: String, _ color: Color) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.85), in: Capsule())
+            .foregroundStyle(.white)
+            .transition(.opacity)
     }
 
     @ViewBuilder

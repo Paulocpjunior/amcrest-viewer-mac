@@ -57,18 +57,34 @@ final class CameraFeed: ObservableObject {
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastFrameAt: Date?
 
-    /// IA: há uma pessoa na cena agora (com janela de hold, para o selo não piscar).
-    @Published private(set) var personPresent = false
+    /// IA: o que está na cena agora (pessoa, veículo), com janela de hold por tipo,
+    /// para o selo não piscar quando um quadro falha a detecção.
+    @Published private(set) var present: Set<DetectionKind> = []
 
-    /// Liga/desliga a detecção de pessoas por IA nesta câmera.
-    var detectPeople = false {
+    /// Conveniências para a interface.
+    var personPresent: Bool { present.contains(.person) }
+    var vehiclePresent: Bool { present.contains(.vehicle) }
+
+    /// O que a IA deve procurar nesta câmera. Vazio = IA desligada.
+    var detectKinds: Set<DetectionKind> = [] {
         didSet {
-            guard detectPeople != oldValue else { return }
-            if !detectPeople { personPresent = false }
+            guard detectKinds != oldValue else { return }
+            for kind in oldValue.subtracting(detectKinds) { gates[kind] = nil }
+            present = present.intersection(detectKinds)
         }
     }
 
-    private var gate = DetectionGate()
+    /// Liga/desliga os detectores a partir dos botões da interface.
+    func setDetection(people: Bool, vehicles: Bool) {
+        var kinds: Set<DetectionKind> = []
+        if people { kinds.insert(.person) }
+        if vehicles { kinds.insert(.vehicle) }
+        detectKinds = kinds
+    }
+
+    /// Ritmo da análise (usa só o throttle do gate) e um gate por tipo para o hold.
+    private var pacer = DetectionGate()
+    private var gates: [DetectionKind: DetectionGate] = [:]
     private var analyzing = false
     private let detectQueue = DispatchQueue(label: "amcrest.detect", qos: .utility)
 
@@ -101,8 +117,9 @@ final class CameraFeed: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         status = .idle
-        personPresent = false
-        gate = DetectionGate()
+        present = []
+        pacer = DetectionGate()
+        gates = [:]
     }
 
     // MARK: - MJPEG
@@ -198,23 +215,30 @@ final class CameraFeed: ObservableObject {
 
     // MARK: - IA (detecção no Mac, via Vision)
 
-    /// Roda o detector num quadro, com throttle, fora da main thread.
+    /// Roda os detectores num quadro, com throttle, fora da main thread.
     private func analyze(_ img: NSImage, gen: Int) {
-        guard detectPeople, !analyzing else { return }
-        guard gate.shouldAnalyze(now: Date()) else { return }
+        guard !detectKinds.isEmpty, !analyzing else { return }
+        guard pacer.shouldAnalyze(now: Date()) else { return }
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let kinds = detectKinds
         analyzing = true
         detectQueue.async { [weak self] in
-            let count = PersonDetector.peopleCount(inCGImage: cg)
-            Task { @MainActor in self?.finishAnalysis(detected: count > 0, gen: gen) }
+            let found = SceneDetector.detect(inCGImage: cg, kinds: kinds)
+            Task { @MainActor in self?.finishAnalysis(found: found, requested: kinds, gen: gen) }
         }
     }
 
-    private func finishAnalysis(detected: Bool, gen: Int) {
+    private func finishAnalysis(found: Set<DetectionKind>, requested: Set<DetectionKind>, gen: Int) {
         analyzing = false
-        guard gen == generation, active, detectPeople else { return }
-        let outcome = gate.record(detected: detected, now: Date())
-        personPresent = outcome.isPresent
+        guard gen == generation, active else { return }
+        let now = Date()
+        var current: Set<DetectionKind> = []
+        for kind in requested where detectKinds.contains(kind) {
+            var gate = gates[kind] ?? DetectionGate()
+            if gate.record(detected: found.contains(kind), now: now).isPresent { current.insert(kind) }
+            gates[kind] = gate
+        }
+        present = current
     }
 
     private func fail(_ message: String, retry: Bool) {
