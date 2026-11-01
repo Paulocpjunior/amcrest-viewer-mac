@@ -13,6 +13,7 @@ import Foundation
 ///     http://192.168.1.12
 ///     rtsp://admin:senha@192.168.1.13:554/cam/realmonitor?channel=1&subtype=0
 ///     cam-quintal.local
+///     Portão 192.168.1.11 sn AMC01853PN52UCB543
 ///
 /// O que não for reconhecido NÃO é adivinhado: a linha volta em `rejected`,
 /// com o motivo, para o usuário corrigir o arquivo.
@@ -72,6 +73,7 @@ public enum CameraListParser {
         var password: String?
         var explicitUser: String?
         var explicitChannel: Int?
+        var serial: String?
 
         var i = 0
         while i < tokens.count {
@@ -90,6 +92,11 @@ public enum CameraListParser {
                 i += 1
             } else if let ch = channelSuffix(lower) {
                 explicitChannel = ch
+            } else if let sn = serialPrefix(t) {
+                serial = sn
+            } else if serialKeywords.contains(lower), i + 1 < tokens.count {
+                serial = tokens[i + 1]
+                i += 1
             } else if ["usuario", "usuário", "user", "login"].contains(lower), i + 1 < tokens.count {
                 explicitUser = tokens[i + 1]
                 i += 1
@@ -108,10 +115,14 @@ public enum CameraListParser {
         }
 
         guard var cam = camera else {
+            if let serial {
+                return .failure(Reason(message: "só o S/N \(serial), sem IP: a conexão pelo S/N ainda não é suportada; informe também o IP local da câmera"))
+            }
             return .failure(Reason(message: "nenhum IP, nome de rede (ex.: cam.local) ou URL encontrado"))
         }
         if let explicitChannel { cam.channel = explicitChannel }
         if let explicitUser { cam.username = explicitUser }
+        if let serial { cam.serialNumber = serial }
         cam.name = nameParts.joined(separator: " ")
         return .success(ParsedCamera(camera: cam, password: password, lineNumber: 0))
     }
@@ -197,6 +208,17 @@ public enum CameraListParser {
         for prefix in ["canal", "channel", "ch"] where lower.hasPrefix(prefix) {
             let rest = lower.dropFirst(prefix.count)
             if let n = Int(rest), n > 0 { return n }
+        }
+        return nil
+    }
+
+    static let serialKeywords: Set<String> = ["sn", "s/n", "sn:", "s/n:", "serial", "serial:"]
+
+    /// "sn:AMC0185..." ou "s/n:AMC0185..." num token só.
+    static func serialPrefix(_ token: String) -> String? {
+        for prefix in ["s/n:", "sn:", "serial:"] where token.lowercased().hasPrefix(prefix) {
+            let rest = token.dropFirst(prefix.count)
+            if !rest.isEmpty { return String(rest) }
         }
         return nil
     }

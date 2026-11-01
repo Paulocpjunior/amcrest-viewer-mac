@@ -101,4 +101,37 @@ final class CameraListParserTests: XCTestCase {
         let r = CameraListParser.parse("192.168.1.50 canal 2")
         XCTAssertEqual(r.cameras[0].camera.name, "192.168.1.50 · canal 2")
     }
+
+    func testSerialDepoisDoIP() {
+        let r = CameraListParser.parse("3016 YLL FRONT 192.168.1.20 sn AMC01853PN52UCB543")
+        let c = r.cameras[0].camera
+        XCTAssertEqual(c.name, "3016 YLL FRONT")
+        XCTAssertEqual(c.host, "192.168.1.20")
+        XCTAssertEqual(c.serialNumber, "AMC01853PN52UCB543")
+    }
+
+    func testSerialComDoisPontosEIgual() {
+        XCTAssertEqual(CameraListParser.parse("Cam 192.168.1.21 S/N:AMC018X166ZL5W937Z").cameras[0].camera.serialNumber,
+                       "AMC018X166ZL5W937Z")
+        XCTAssertEqual(CameraListParser.parse("Cam 192.168.1.22 serial=Z20CBD8C52AB0").cameras[0].camera.serialNumber,
+                       "Z20CBD8C52AB0")
+    }
+
+    func testSemSerialFicaNil() {
+        XCTAssertNil(CameraListParser.parse("Garagem 192.168.1.10").cameras[0].camera.serialNumber)
+    }
+
+    func testRejeitaSoSerialComMotivoClaro() {
+        let r = CameraListParser.parse("Yellow Front sn AMC01858719C691882")
+        XCTAssertTrue(r.cameras.isEmpty)
+        XCTAssertEqual(r.rejected.count, 1)
+        XCTAssertTrue(r.rejected[0].reason.contains("S/N AMC01858719C691882"))
+    }
+
+    func testListaAntigaSemSerialAindaAbre() throws {
+        let json = #"[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Garagem","host":"192.168.1.10","httpPort":80,"rtspPort":554,"channel":1,"username":"admin","useHTTPS":false}]"#
+        let cams = try JSONDecoder().decode([Camera].self, from: Data(json.utf8))
+        XCTAssertEqual(cams.count, 1)
+        XCTAssertNil(cams[0].serialNumber)
+    }
 }
