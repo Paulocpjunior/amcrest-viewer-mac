@@ -64,12 +64,19 @@ final class CameraFeed: ObservableObject {
     var detectPeople = false {
         didSet {
             guard detectPeople != oldValue else { return }
-            if !detectPeople { personPresent = false }
+            // Invalida qualquer análise em voo: um resultado de antes da troca
+            // não pode reacender o selo depois de religar.
+            detectEpoch &+= 1
+            analyzing = false
+            personPresent = false
+            gate = DetectionGate()
         }
     }
 
     private var gate = DetectionGate()
     private var analyzing = false
+    /// Muda a cada vez que a detecção é ligada/desligada; descarta trabalho antigo.
+    private var detectEpoch = 0
     private let detectQueue = DispatchQueue(label: "amcrest.detect", qos: .utility)
 
     private var camera: Camera?
@@ -103,6 +110,8 @@ final class CameraFeed: ObservableObject {
         status = .idle
         personPresent = false
         gate = DetectionGate()
+        analyzing = false
+        detectEpoch &+= 1
     }
 
     // MARK: - MJPEG
@@ -204,13 +213,17 @@ final class CameraFeed: ObservableObject {
         guard gate.shouldAnalyze(now: Date()) else { return }
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         analyzing = true
+        let epoch = detectEpoch
         detectQueue.async { [weak self] in
             let count = PersonDetector.peopleCount(inCGImage: cg)
-            Task { @MainActor in self?.finishAnalysis(detected: count > 0, gen: gen) }
+            Task { @MainActor in self?.finishAnalysis(detected: count > 0, gen: gen, epoch: epoch) }
         }
     }
 
-    private func finishAnalysis(detected: Bool, gen: Int) {
+    private func finishAnalysis(detected: Bool, gen: Int, epoch: Int) {
+        // A detecção foi ligada/desligada depois que esta análise começou: descarta,
+        // sem mexer no `analyzing` de uma análise mais nova que já esteja em voo.
+        guard epoch == detectEpoch else { return }
         analyzing = false
         guard gen == generation, active, detectPeople else { return }
         let outcome = gate.record(detected: detected, now: Date())
