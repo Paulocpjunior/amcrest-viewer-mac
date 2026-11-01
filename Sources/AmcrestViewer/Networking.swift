@@ -365,10 +365,10 @@ enum WebLoginCheck {
             return (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any]
         }
 
-        guard let first = await post("RPC2_Login", WebLogin.challengeBody(username: camera.username)),
-              let params = first["params"] as? [String: Any],
+        guard let first = await post("RPC2_Login", WebLogin.challengeBody(username: camera.username)) else { return nil }
+        guard let params = first["params"] as? [String: Any],
               let realm = params["realm"] as? String, let random = params["random"] as? String else {
-            if let first, let err = first["error"] as? [String: Any] {
+            if let err = first["error"] as? [String: Any] {
                 return WebLogin.outcome(result: false, code: err["code"] as? Int, message: err["message"] as? String)
             }
             return nil
