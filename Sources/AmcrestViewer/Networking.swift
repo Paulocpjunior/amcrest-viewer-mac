@@ -189,6 +189,30 @@ struct AmcrestClient {
         try fm.moveItem(at: tmp, to: destination)
     }
 
+    /// Ficha do aparelho (modelo, firmware, S/N, hardware), para a Administração.
+    /// Só falha se nem o modelo responder; os outros campos são opcionais (nem todo firmware tem todos).
+    func deviceInfo() async throws -> DeviceInfo {
+        var info = DeviceInfo()
+        info.model = try await deviceType()
+        if let text = await magicText(.softwareVersion), let v = DahuaResponse.softwareVersion(text) {
+            info.firmware = v.version
+            info.firmwareBuild = v.build
+        }
+        if let text = await magicText(.serialNumber) {
+            info.serial = DahuaResponse.singleValue(text, key: "sn")
+        }
+        if let text = await magicText(.hardwareVersion) {
+            info.hardware = DahuaResponse.singleValue(text, key: "version")
+        }
+        return info
+    }
+
+    /// Resposta texto de uma ação do magicBox, ou nil se a câmera não tiver a ação.
+    private func magicText(_ action: MagicBoxAction) async -> String? {
+        guard let result = try? await get(AmcrestEndpoints.magicBox(camera, action)) else { return nil }
+        return String(decoding: result.0, as: UTF8.self)
+    }
+
     /// Resposta típica: `type=IP2M-841B`. Devolve só o modelo.
     func deviceType() async throws -> String {
         let (data, _) = try await get(AmcrestEndpoints.deviceType(camera))

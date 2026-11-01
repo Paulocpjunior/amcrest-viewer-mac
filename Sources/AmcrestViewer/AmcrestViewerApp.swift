@@ -26,6 +26,30 @@ struct AmcrestViewerApp: App {
             }
             .environmentObject(store)
         }
+
+        // Administração do hardware: cadastro, senhas, busca na rede, importação e firmware.
+        Window("Administração", id: AdminWindow.id) {
+            AdminView()
+                .environmentObject(store)
+        }
+        .defaultSize(width: 980, height: 620)
+        .commands { AdminCommands() }
+    }
+}
+
+enum AdminWindow {
+    static let id = "admin"
+}
+
+/// ⌘, abre a Administração (no lugar de "Ajustes…" do menu do app).
+struct AdminCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Administração…") { openWindow(id: AdminWindow.id) }
+                .keyboardShortcut(",", modifiers: .command)
+        }
     }
 }
 

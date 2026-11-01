@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import AmcrestCore
 
 /// Janela principal: grade com todas as câmeras ao vivo (subfluxo, leve).
@@ -10,11 +9,7 @@ struct CameraGridView: View {
     @AppStorage("gridColumns") private var columns = 2
     @AppStorage("detectPeople") private var detectPeople = false
     @AppStorage("detectVehicles") private var detectVehicles = false
-    @State private var showImporter = false
-    @State private var importReport: ImportReport?
     @State private var editing: Camera?
-    @State private var creating = false
-    @State private var scanning = false
     @State private var confirmRemove: Camera?
 
     var body: some View {
@@ -43,13 +38,6 @@ struct CameraGridView: View {
                 .pickerStyle(.segmented)
                 .help("Câmeras por linha")
 
-                Button { scanning = true } label: { Label("Procurar na rede", systemImage: "dot.radiowaves.left.and.right") }
-                    .help("Procurar câmeras na rede local (ONVIF). Nada vai para a nuvem.")
-                Button { showImporter = true } label: { Label("Importar .txt", systemImage: "square.and.arrow.down") }
-                    .help("Importar a lista de câmeras de um arquivo .txt")
-                Button { creating = true } label: { Label("Adicionar", systemImage: "plus") }
-                    .help("Adicionar uma câmera manualmente")
-
                 Toggle(isOn: $detectPeople) { Label("Detectar pessoas", systemImage: "figure.walk") }
                     .toggleStyle(.button)
                     .help("IA no seu Mac: marca as câmeras onde aparece uma pessoa. Nada vai para a nuvem.")
@@ -57,19 +45,12 @@ struct CameraGridView: View {
                 Toggle(isOn: $detectVehicles) { Label("Detectar veículos", systemImage: "car.fill") }
                     .toggleStyle(.button)
                     .help("IA no seu Mac: marca as câmeras onde aparece um veículo. Nada vai para a nuvem.")
+
+                Button { openWindow(id: AdminWindow.id) } label: { Label("Administração", systemImage: "gearshape") }
+                    .help("Câmeras, senhas, procurar na rede, importar e hardware (⌘,)")
             }
         }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
-            if case .success(let url) = result { importReport = store.importTXT(from: url) }
-        }
-        .sheet(item: $importReport) { ImportReportView(report: $0).environmentObject(store) }
         .sheet(item: $editing) { CameraEditorView(camera: $0, isNew: false).environmentObject(store) }
-        .sheet(isPresented: $creating) {
-            CameraEditorView(camera: Camera(name: "", host: ""), isNew: true).environmentObject(store)
-        }
-        .sheet(isPresented: $scanning) {
-            NetworkScanView().environmentObject(store)
-        }
         .alert("Remover \(confirmRemove?.name ?? "")?", isPresented: Binding(
             get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })
         ) {
@@ -79,7 +60,8 @@ struct CameraGridView: View {
             Text("A câmera e a senha salva no Keychain serão apagadas deste Mac.")
         }
         .alert("Atenção", isPresented: Binding(
-            get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })
+            // Com a Administração aberta, o aviso aparece lá (não repete aqui).
+            get: { store.errorMessage != nil && !store.adminVisible }, set: { if !$0 { store.errorMessage = nil } })
         ) {
             Button("OK") {}
         } message: {
@@ -91,13 +73,10 @@ struct CameraGridView: View {
         VStack(spacing: 14) {
             Image(systemName: "video.badge.plus").font(.system(size: 44)).foregroundStyle(.secondary)
             Text("Nenhuma câmera cadastrada").font(.title2)
-            Text("Importe o .txt com os endereços das câmeras ou adicione uma manualmente.")
+            Text("Cadastre as câmeras na Administração: procurar na rede, por S/N, por IP ou importar um .txt.")
                 .foregroundStyle(.secondary)
-            HStack {
-                Button("Procurar na rede") { scanning = true }.keyboardShortcut(.defaultAction)
-                Button("Importar .txt") { showImporter = true }
-                Button("Adicionar manualmente") { creating = true }
-            }
+            Button("Abrir Administração") { openWindow(id: AdminWindow.id) }
+                .keyboardShortcut(.defaultAction)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,6 +92,8 @@ struct CameraGridView: View {
         Divider()
         Button("Editar…") { editing = cam }
         Button("Remover…", role: .destructive) { confirmRemove = cam }
+        Divider()
+        Button("Administração…") { openWindow(id: AdminWindow.id) }
     }
 }
 

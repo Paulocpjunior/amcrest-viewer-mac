@@ -60,6 +60,8 @@ final class CameraStore: ObservableObject {
     @Published var errorMessage: String?
     /// Muda a cada gravação (inclusive troca de senha) para as telas reconectarem.
     @Published private(set) var revision = 0
+    /// A janela de Administração está aberta: ela mostra os avisos, e a grade não repete.
+    @Published var adminVisible = false
 
     private let fileURL: URL
 

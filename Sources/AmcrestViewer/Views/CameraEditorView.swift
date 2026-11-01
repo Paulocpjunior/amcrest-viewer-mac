@@ -8,6 +8,8 @@ struct CameraEditorView: View {
 
     @State var camera: Camera
     let isNew: Bool
+    /// Aberto por "Adicionar por S/N": destaca o campo do S/N.
+    var bySerial = false
 
     @State private var password = ""
     @State private var testResult: String?
@@ -24,7 +26,13 @@ struct CameraEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(isNew ? "Nova câmera" : "Editar câmera").font(.title2.weight(.semibold))
+            Text(isNew ? (bySerial ? "Nova câmera por S/N" : "Nova câmera") : "Editar câmera")
+                .font(.title2.weight(.semibold))
+            if isNew && bySerial {
+                Text("Preencha o nome, o S/N e a senha. Deixe o Endereço em branco: o app acha o IP na rede.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Form {
                 TextField("Nome", text: $camera.name, prompt: Text("Ex.: Garagem"))
