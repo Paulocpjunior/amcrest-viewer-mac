@@ -44,6 +44,17 @@ final class NetworkScanner: ObservableObject {
         }
     }
 
+    /// Procura na rede uma câmera com o S/N dado e devolve o aparelho (ou nil, se ninguém responder com esse S/N).
+    /// Usado pelo cadastro: informar o S/N e deixar o app achar o IP local sozinho.
+    func resolve(serial: String, duration: TimeInterval = 5) async -> DiscoveredDevice? {
+        await withCheckedContinuation { cont in
+            queue.async {
+                let found = NetworkScanner.probe(duration: duration)
+                cont.resume(returning: OnvifDiscovery.firstMatchingSerial(found, serial: serial))
+            }
+        }
+    }
+
     /// Envia o Probe multicast e coleta respostas até `duration` segundos. Fora da main thread.
     nonisolated static func probe(duration: TimeInterval) -> [DiscoveredDevice] {
         let fd = socket(AF_INET, SOCK_DGRAM, 0)
