@@ -2,24 +2,34 @@ import Foundation
 import Darwin
 import AmcrestCore
 
-/// Procura câmeras na rede local pelo padrão aberto ONVIF (WS-Discovery).
-/// Manda um Probe multicast e junta as respostas. Nada de nuvem.
+/// Procura câmeras na rede local: ONVIF (WS-Discovery) e varredura da faixa de IP pela API HTTP.
+/// Só rede interna. Nada de nuvem.
 @MainActor
 final class NetworkScanner: ObservableObject {
     @Published private(set) var devices: [DiscoveredDevice] = []
     @Published private(set) var scanning = false
     @Published private(set) var message: String?
 
-    private let queue = DispatchQueue(label: "amcrest.onvif.scan", qos: .utility)
-
+    /// Procura de duas formas ao mesmo tempo, só na rede interna:
+    /// ONVIF (broadcast) e a faixa de IP inteira do Mac pela API HTTP (acha NVRs sem ONVIF).
     func scan(duration: TimeInterval = 4) {
         guard !scanning else { return }
         scanning = true
         devices = []
         message = nil
-        queue.async { [weak self] in
-            let found = NetworkScanner.probe(duration: duration)
-            Task { @MainActor in self?.finish(found) }
+        Task {
+            async let onvif = Self.probeAsync(duration: duration)
+            async let http = LanHTTPSweeper.sweep(serial: nil, username: "admin", password: nil, preferredPort: nil)
+            let found = await onvif + http
+            finish(found)
+        }
+    }
+
+    nonisolated static func probeAsync(duration: TimeInterval) async -> [DiscoveredDevice] {
+        await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .utility).async {
+                cont.resume(returning: probe(duration: duration))
+            }
         }
     }
 
@@ -40,19 +50,19 @@ final class NetworkScanner: ObservableObject {
         }
         scanning = false
         if devices.isEmpty {
-            message = "Nenhuma câmera respondeu nesta rede. Confira se o Mac está na mesma rede das câmeras. Se houver VPN ligada, desligue e tente de novo."
+            message = "Nenhuma câmera respondeu nesta rede (ONVIF e faixa de IP). Confira se o Mac está na mesma rede das câmeras. Se houver VPN ligada, desligue e tente de novo."
         }
     }
 
-    /// Procura na rede uma câmera com o S/N dado e devolve o aparelho (ou nil, se ninguém responder com esse S/N).
+    /// Procura na rede interna o aparelho com o S/N dado: primeiro ONVIF; se não achar,
+    /// varre toda a faixa de IP do Mac pela API HTTP (com o usuário/senha do cadastro, se houver).
     /// Usado pelo cadastro: informar o S/N e deixar o app achar o IP local sozinho.
-    func resolve(serial: String, duration: TimeInterval = 5) async -> DiscoveredDevice? {
-        await withCheckedContinuation { cont in
-            queue.async {
-                let found = NetworkScanner.probe(duration: duration)
-                cont.resume(returning: OnvifDiscovery.firstMatchingSerial(found, serial: serial))
-            }
-        }
+    func resolve(serial: String, username: String = "admin", password: String? = nil,
+                 preferredPort: Int? = nil, duration: TimeInterval = 4) async -> DiscoveredDevice? {
+        let onvif = await Self.probeAsync(duration: duration)
+        if let hit = OnvifDiscovery.firstMatchingSerial(onvif, serial: serial) { return hit }
+        return await LanHTTPSweeper.sweep(serial: serial, username: username, password: password,
+                                          preferredPort: preferredPort).first
     }
 
     /// Interfaces IPv4 físicas e ativas (en*, bridge*), ignorando loopback, link-local e VPN

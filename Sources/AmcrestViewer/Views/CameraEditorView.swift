@@ -86,6 +86,9 @@ struct CameraEditorView: View {
         if !trimmedHost.isEmpty && CameraListParser.hostPort(trimmedHost) == nil {
             return "Endereço inválido. Use um IP (192.168.1.10) ou nome (cam.local)."
         }
+        if camera.httpPort == LanSweep.dahuaTCPPort || camera.rtspPort == LanSweep.dahuaTCPPort {
+            return "37777 é a porta do app oficial da Amcrest, não serve aqui. Use HTTP 80 e RTSP 554."
+        }
         if !(1...65535).contains(camera.httpPort) || !(1...65535).contains(camera.rtspPort) {
             return "Portas vão de 1 a 65535 (padrão: HTTP 80, RTSP 554)."
         }
@@ -157,9 +160,10 @@ struct CameraEditorView: View {
         }
         resolving = true
         defer { resolving = false }
-        guard let dev = await scanner.resolve(serial: serial) else {
+        guard let dev = await scanner.resolve(serial: serial, username: cam.username,
+                                              password: effectivePassword, preferredPort: cam.httpPort) else {
             testOK = false
-            testResult = "Não achei a câmera com o S/N \(serial) na rede. Confira se ela está ligada e na mesma rede do Mac, ou informe o IP."
+            testResult = "Procurei na rede interna (ONVIF e toda a faixa de IP do Mac) e não achei o S/N \(serial). Confira se o aparelho está ligado nesta mesma rede. Se ele estiver em outro local, cadastre pelo IP."
             return nil
         }
         cam.host = dev.host
