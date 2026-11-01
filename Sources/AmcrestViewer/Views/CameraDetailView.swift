@@ -8,6 +8,7 @@ struct CameraDetailView: View {
     @StateObject private var feed = CameraFeed()
 
     @AppStorage("detailQuality") private var qualityRaw = StreamQuality.main.rawValue
+    @AppStorage("detectPeople") private var detectPeople = false
     @State private var showPTZ = true
     @State private var editing = false
     @State private var message: String?
@@ -60,6 +61,7 @@ struct CameraDetailView: View {
         .onAppear { start(); loadPresets() }
         .onDisappear { feed.stop() }
         .onChange(of: qualityRaw) { _ in start() }
+        .onChange(of: detectPeople) { feed.detectPeople = $0 }
         .onChange(of: store.revision) { _ in start(); loadPresets() }
         .sheet(isPresented: $showRecordings) {
             RecordingsView(camera: current, password: store.password(for: current))
@@ -75,6 +77,7 @@ struct CameraDetailView: View {
     }
 
     private func start() {
+        feed.detectPeople = detectPeople
         feed.start(camera: current, password: store.password(for: current), quality: quality)
     }
 
