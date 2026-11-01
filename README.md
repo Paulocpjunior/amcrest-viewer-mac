@@ -13,6 +13,7 @@ Não usa a nuvem nem o P2P da Amcrest, e não depende de bibliotecas externas.
 ## O que faz
 
 - **Procura câmeras na rede local** (botão "Procurar na rede"): o app faz uma busca pelo padrão aberto **ONVIF** (WS-Discovery), lista o que respondeu com nome, IP e número de série, e você marca e adiciona num clique. É só broadcast na sua rede — **nada vai para a nuvem** e não usa o P2P da Amcrest. As câmeras já cadastradas aparecem marcadas, sem duplicar.
+- **Adiciona por número de série (S/N)**: no cadastro, dá para deixar o **Endereço em branco** e informar só o **S/N**. O app procura a câmera na rede pelo S/N e preenche o IP sozinho (mesma descoberta ONVIF, sem nuvem). Precisa que a câmera esteja ligada e na mesma rede do Mac.
 - **Importa a lista de câmeras de um `.txt`**, com uma câmera por linha. Veja o [`cameras.exemplo.txt`](cameras.exemplo.txt). As linhas que o app não entende aparecem com o número e o motivo, para você corrigir. Nada é adivinhado.
 - **Grade ao vivo** com todas as câmeras, de 1 a 4 colunas, usando o subfluxo (leve).
 - **Janela por câmera** (duplo clique), com:

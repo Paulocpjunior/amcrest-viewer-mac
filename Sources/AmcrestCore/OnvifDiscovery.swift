@@ -101,6 +101,19 @@ public enum OnvifDiscovery {
         return nil
     }
 
+    /// Normaliza um número de série para comparar: maiúsculas, só letras e dígitos
+    /// (ignora espaços, traços e dois-pontos que aparecem de formas diferentes).
+    public static func normalizeSerial(_ s: String) -> String {
+        String(String(s).uppercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+    }
+
+    /// Primeiro aparelho cujo S/N anunciado bate com o procurado (comparação normalizada).
+    public static func firstMatchingSerial(_ devices: [DiscoveredDevice], serial: String) -> DiscoveredDevice? {
+        let want = normalizeSerial(serial)
+        guard !want.isEmpty else { return nil }
+        return devices.first { normalizeSerial($0.serial ?? "") == want }
+    }
+
     /// Valor de um scope ONVIF "onvif://www.onvif.org/<key>/<valor>" (valor vem percent-encoded).
     public static func scopeValue(_ scopes: [String], key: String) -> String? {
         let needle = "/\(key)/"

@@ -143,6 +143,28 @@ final class OnvifDiscoveryTests: XCTestCase {
         XCTAssertTrue(msg.contains("xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\""))
     }
 
+    func testNormalizeSerialIgnoraSeparadores() {
+        XCTAssertEqual(OnvifDiscovery.normalizeSerial(" amc-0185 3pn:52 "), "AMC01853PN52")
+        XCTAssertEqual(OnvifDiscovery.normalizeSerial("U0WI4100062MC"), "U0WI4100062MC")
+        XCTAssertEqual(OnvifDiscovery.normalizeSerial(""), "")
+    }
+
+    func testFirstMatchingSerialAchaIgnorandoFormato() {
+        let devices = [
+            DiscoveredDevice(host: "192.168.1.11", serial: "AMC0185-3PN52", xaddr: "http://192.168.1.11/onvif/device_service"),
+            DiscoveredDevice(host: "192.168.1.12", serial: "U0WI4100062MC", xaddr: "http://192.168.1.12/onvif/device_service"),
+        ]
+        XCTAssertEqual(OnvifDiscovery.firstMatchingSerial(devices, serial: "u0wi4100062mc")?.host, "192.168.1.12")
+        XCTAssertEqual(OnvifDiscovery.firstMatchingSerial(devices, serial: "amc01853pn52")?.host, "192.168.1.11")
+        XCTAssertNil(OnvifDiscovery.firstMatchingSerial(devices, serial: "NAOEXISTE"))
+        XCTAssertNil(OnvifDiscovery.firstMatchingSerial(devices, serial: ""))
+    }
+
+    func testFirstMatchingSerialIgnoraAparelhoSemSerial() {
+        let devices = [DiscoveredDevice(host: "192.168.1.11", xaddr: "http://192.168.1.11/onvif/device_service")]
+        XCTAssertNil(OnvifDiscovery.firstMatchingSerial(devices, serial: "QUALQUER"))
+    }
+
     func testScopeValueDesconhecidoFicaNil() {
         let scopes = ["onvif://www.onvif.org/name/X"]
         XCTAssertNil(OnvifDiscovery.scopeValue(scopes, key: "hardware"))

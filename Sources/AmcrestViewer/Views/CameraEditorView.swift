@@ -13,6 +13,14 @@ struct CameraEditorView: View {
     @State private var testResult: String?
     @State private var testOK = false
     @State private var testing = false
+    @State private var resolving = false
+    @State private var work: Task<Void, Never>?
+    @StateObject private var scanner = NetworkScanner()
+
+    /// O cadastro pode ser por endereço OU por S/N (o app acha o IP na rede).
+    private var trimmedHost: String { camera.host.trimmingCharacters(in: .whitespaces) }
+    private var trimmedSerial: String { (camera.serialNumber ?? "").trimmingCharacters(in: .whitespaces) }
+    private var busy: Bool { testing || resolving }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -20,14 +28,14 @@ struct CameraEditorView: View {
 
             Form {
                 TextField("Nome", text: $camera.name, prompt: Text("Ex.: Garagem"))
-                TextField("Endereço", text: $camera.host, prompt: Text("IP ou nome. Ex.: 192.168.1.10"))
+                TextField("Endereço", text: $camera.host, prompt: Text("IP ou nome (ou deixe em branco e informe o S/N)"))
                 HStack {
                     TextField("Porta HTTP", value: $camera.httpPort, format: .number.grouping(.never))
                     TextField("Porta RTSP", value: $camera.rtspPort, format: .number.grouping(.never))
                 }
                 Stepper("Canal: \(camera.channel)", value: $camera.channel, in: 1...128)
                 Toggle("Usar HTTPS", isOn: $camera.useHTTPS)
-                TextField("Serial (S/N)", text: serialBinding, prompt: Text("Opcional. Ex.: AMC01853PN52UCB543"))
+                TextField("Serial (S/N)", text: serialBinding, prompt: Text("Ex.: AMC01853PN52UCB543 (o app acha o IP na rede)"))
                 TextField("Usuário", text: $camera.username)
                 SecureField("Senha", text: $password,
                             prompt: Text(isNew || !store.hasPassword(camera) ? "Senha da câmera" : "Deixe em branco para manter a atual"))
@@ -40,28 +48,36 @@ struct CameraEditorView: View {
             }
 
             HStack {
-                Button("Testar conexão") { test() }
-                    .disabled(camera.host.isEmpty || testing)
-                if testing { ProgressView().controlSize(.small) }
+                Button(trimmedHost.isEmpty && !trimmedSerial.isEmpty ? "Procurar e testar" : "Testar conexão") { test() }
+                    .disabled((trimmedHost.isEmpty && trimmedSerial.isEmpty) || busy)
+                if busy { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Cancelar", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Salvar") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(validationError != nil)
+                    .disabled(validationError != nil || busy)
             }
             if let validationError {
                 Text(validationError).font(.caption).foregroundStyle(.secondary)
+            } else if trimmedHost.isEmpty && !trimmedSerial.isEmpty {
+                Text("Sem o endereço, o app procura a câmera na rede pelo S/N e preenche o IP.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(20)
         .frame(width: 460)
+        .onDisappear { work?.cancel() }
     }
 
     private var validationError: String? {
-        let host = camera.host.trimmingCharacters(in: .whitespaces)
-        if host.isEmpty { return "Informe o IP ou o nome de rede da câmera." }
-        if CameraListParser.hostPort(host) == nil { return "Endereço inválido. Use um IP (192.168.1.10) ou nome (cam.local)." }
+        // Pode cadastrar por endereço OU por S/N (o app resolve o IP na rede).
+        if trimmedHost.isEmpty && trimmedSerial.isEmpty {
+            return "Informe o IP, o nome de rede ou o S/N da câmera."
+        }
+        if !trimmedHost.isEmpty && CameraListParser.hostPort(trimmedHost) == nil {
+            return "Endereço inválido. Use um IP (192.168.1.10) ou nome (cam.local)."
+        }
         if !(1...65535).contains(camera.httpPort) || !(1...65535).contains(camera.rtspPort) {
             return "Portas vão de 1 a 65535 (padrão: HTTP 80, RTSP 554)."
         }
@@ -89,16 +105,18 @@ struct CameraEditorView: View {
     }
 
     private func test() {
-        testing = true
         testResult = nil
-        let cam = normalized()
-        let client = AmcrestClient(camera: cam, password: effectivePassword)
-        Task {
+        work = Task {
+            guard let cam = await resolvedCamera() else { return }
+            if Task.isCancelled { return }
+            testing = true
             defer { testing = false }
+            camera = cam  // reflete o IP achado na tela
+            let client = AmcrestClient(camera: cam, password: effectivePassword)
             do {
                 let model = try await client.deviceType()
                 testOK = true
-                testResult = "Conectado. Modelo: \(model)"
+                testResult = "Conectado em \(cam.host). Modelo: \(model)"
             } catch {
                 testOK = false
                 testResult = CameraError.friendly(error, camera: cam)
@@ -107,7 +125,39 @@ struct CameraEditorView: View {
     }
 
     private func save() {
-        store.save(normalized(), password: password.isEmpty ? nil : password)
-        dismiss()
+        testResult = nil
+        work = Task {
+            guard let cam = await resolvedCamera() else { return }
+            // Se o editor já foi fechado (ex.: Cancelar durante a busca), não salva.
+            if Task.isCancelled { return }
+            camera = cam
+            store.save(cam, password: password.isEmpty ? nil : password)
+            dismiss()
+        }
+    }
+
+    /// Devolve a câmera pronta para conectar: se o endereço estiver vazio e houver S/N,
+    /// procura na rede pelo S/N e preenche IP/porta/HTTPS. Em caso de falha, mostra o motivo e devolve nil.
+    private func resolvedCamera() async -> Camera? {
+        var cam = normalized()
+        guard cam.host.isEmpty else { return cam }
+        let serial = trimmedSerial
+        guard !serial.isEmpty else {
+            testOK = false
+            testResult = "Informe o IP ou o S/N da câmera."
+            return nil
+        }
+        resolving = true
+        defer { resolving = false }
+        guard let dev = await scanner.resolve(serial: serial) else {
+            testOK = false
+            testResult = "Não achei a câmera com o S/N \(serial) na rede. Confira se ela está ligada e na mesma rede do Mac, ou informe o IP."
+            return nil
+        }
+        cam.host = dev.host
+        cam.httpPort = dev.httpPort
+        cam.useHTTPS = dev.useHTTPS
+        if cam.name.isEmpty { cam.name = dev.displayName }
+        return cam
     }
 }
