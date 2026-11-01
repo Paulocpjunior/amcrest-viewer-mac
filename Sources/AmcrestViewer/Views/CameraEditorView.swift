@@ -27,6 +27,7 @@ struct CameraEditorView: View {
                 }
                 Stepper("Canal: \(camera.channel)", value: $camera.channel, in: 1...128)
                 Toggle("Usar HTTPS", isOn: $camera.useHTTPS)
+                TextField("Serial (S/N)", text: serialBinding, prompt: Text("Opcional. Ex.: AMC01853PN52UCB543"))
                 TextField("Usuário", text: $camera.username)
                 SecureField("Senha", text: $password,
                             prompt: Text(isNew || !store.hasPassword(camera) ? "Senha da câmera" : "Deixe em branco para manter a atual"))
@@ -67,6 +68,11 @@ struct CameraEditorView: View {
         return nil
     }
 
+    private var serialBinding: Binding<String> {
+        Binding(get: { camera.serialNumber ?? "" },
+                set: { camera.serialNumber = $0 })
+    }
+
     /// Senha a usar agora: a digitada, ou a já salva.
     private var effectivePassword: String? {
         password.isEmpty ? store.password(for: camera) : password
@@ -77,6 +83,8 @@ struct CameraEditorView: View {
         c.host = c.host.trimmingCharacters(in: .whitespaces)
         c.name = c.name.trimmingCharacters(in: .whitespaces)
         if c.name.isEmpty { c.name = c.host }
+        let sn = (c.serialNumber ?? "").trimmingCharacters(in: .whitespaces)
+        c.serialNumber = sn.isEmpty ? nil : sn
         return c
     }
 
