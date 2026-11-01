@@ -50,6 +50,12 @@ struct AdminCommands: Commands {
             Button("Administração…") { openWindow(id: AdminWindow.id) }
                 .keyboardShortcut(",", modifiers: .command)
         }
+        CommandGroup(after: .appInfo) {
+            Button("Versões e novidades…") {
+                UserDefaults.standard.set(AdminSection.versions.rawValue, forKey: "adminSection")
+                openWindow(id: AdminWindow.id)
+            }
+        }
     }
 }
 

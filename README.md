@@ -17,6 +17,7 @@ Não usa a nuvem nem o P2P da Amcrest, e não depende de bibliotecas externas.
   - **Adicionar câmeras**: procurar na rede, por S/N, por IP ou importar `.txt`;
   - **Usuário e senha**: aplica o mesmo login a várias câmeras de uma vez (ex.: todas as sem senha);
   - **Hardware e firmware**: lê de cada câmera o modelo, a versão do firmware, o S/N e o hardware, e guarda o S/N no cadastro. Atualizar firmware pelo app vem depois.
+  - **Versões**: versão instalada e o histórico de versões, com data e o que mudou (também no menu do app → "Versões e novidades…").
   A grade principal fica só para assistir (colunas e IA).
 - **Procura câmeras na rede local** (Administração → Adicionar câmeras → "Procurar na rede"): o app faz uma busca pelo padrão aberto **ONVIF** (WS-Discovery) e, ao mesmo tempo, **varre toda a faixa de IP** da rede do Mac (o /24 de cada interface) pela API HTTP da câmera, o que acha também NVRs e câmeras com ONVIF desligado, lista o que respondeu com nome, IP e número de série, e você marca e adiciona num clique. É só broadcast na sua rede — **nada vai para a nuvem** e não usa o P2P da Amcrest. As câmeras já cadastradas aparecem marcadas, sem duplicar.
 - **Adiciona por número de série (S/N)**: no cadastro, dá para deixar o **Endereço em branco** e informar só o **S/N**. O app procura a câmera na rede pelo S/N e preenche o IP sozinho (mesma descoberta ONVIF, sem nuvem). Precisa que a câmera esteja ligada e na mesma rede do Mac.

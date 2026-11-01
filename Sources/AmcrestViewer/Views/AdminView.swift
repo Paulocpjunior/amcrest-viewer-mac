@@ -4,7 +4,7 @@ import AmcrestCore
 
 /// Seções da janela de Administração.
 enum AdminSection: String, CaseIterable, Identifiable {
-    case cameras, add, credentials, hardware
+    case cameras, add, credentials, hardware, versions
 
     var id: Self { self }
 
@@ -14,6 +14,7 @@ enum AdminSection: String, CaseIterable, Identifiable {
         case .add: return "Adicionar câmeras"
         case .credentials: return "Usuário e senha"
         case .hardware: return "Hardware e firmware"
+        case .versions: return "Versões"
         }
     }
 
@@ -23,6 +24,7 @@ enum AdminSection: String, CaseIterable, Identifiable {
         case .add: return "plus.circle"
         case .credentials: return "key"
         case .hardware: return "cpu"
+        case .versions: return "clock.arrow.circlepath"
         }
     }
 }
@@ -122,6 +124,8 @@ struct AdminView: View {
             AdminCredentialsPane()
         case .hardware:
             AdminHardwarePane()
+        case .versions:
+            AdminVersionsPane()
         }
     }
 }
@@ -466,6 +470,57 @@ struct AdminHardwarePane: View {
                     states[id] = state
                 }
             }
+        }
+    }
+}
+
+// MARK: - Versões
+
+/// Versão instalada e histórico de versões, com data e o que mudou.
+struct AdminVersionsPane: View {
+    private var installed: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ReleaseNotes.latest.version
+    }
+    private var build: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                AdminHeader(title: "Versões",
+                            subtitle: "Instalada: \(installed)" + (build.map { " (build \($0))" } ?? "")
+                                + " · \(ReleaseNotes.all.count) versões lançadas")
+                ForEach(ReleaseNotes.all) { release in
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("Versão \(release.version)").font(.headline)
+                                Text(release.title).foregroundStyle(.secondary)
+                                if release.version == installed {
+                                    Text("instalada")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(Color.green.opacity(0.2), in: Capsule())
+                                        .foregroundStyle(.green)
+                                }
+                                Spacer()
+                                Text(release.displayDate).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                            ForEach(release.changes, id: \.self) { change in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text("•").foregroundStyle(.secondary)
+                                    Text(change).fixedSize(horizontal: false, vertical: true)
+                                }
+                                .font(.callout)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                    }
+                }
+            }
+            .padding(20)
         }
     }
 }
