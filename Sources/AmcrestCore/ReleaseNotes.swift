@@ -28,6 +28,11 @@ public struct Release: Identifiable, Hashable, Sendable {
 /// Ao lançar uma versão: acrescente no topo e atualize CFBundleShortVersionString no Info.plist.
 public enum ReleaseNotes {
     public static let all: [Release] = [
+        Release(version: "0.6.3", date: "2026-11-01", title: "Login nas câmeras corrigido", changes: [
+            "O app agora faz o login Digest na câmera ele mesmo, em vez de deixar o macOS negociar. Corrige câmeras na mesma rede que abriam no Safari mas ficavam sem imagem no app.",
+            "Se a câmera pede login e some depois de receber a senha, o app diz isso, em vez de \"não respondeu a tempo\".",
+            "Testar todas agora e Testar conexão conferem a senha pelo mesmo login da página da câmera (o do Safari) e dizem se a senha está errada, se o usuário foi bloqueado ou se falta liberar a API na câmera.",
+        ]),
         Release(version: "0.6.2", date: "2026-11-01", title: "Atualização e status", changes: [
             "Janela de Atualização: versão instalada, se há versão nova publicada e as novidades. Abre sozinha depois de cada atualização e pelo menu Procurar atualizações….",
             "Barra de status no rodapé da grade: quantas câmeras ao vivo, em snapshots, conectando e com erro, mais a versão do app.",

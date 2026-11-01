@@ -43,6 +43,8 @@ enum CameraError: LocalizedError {
     case unauthorized
     case http(Int)
     case unexpectedContent
+    /// A câmera respondeu ao primeiro contato (pediu login), mas ficou muda ao receber usuário e senha.
+    case loginNoResponse
 
     var errorDescription: String? {
         switch self {
@@ -56,6 +58,8 @@ enum CameraError: LocalizedError {
             return "A câmera respondeu com erro HTTP \(code). Reinicie a câmera ou confira o firmware."
         case .unexpectedContent:
             return "A câmera respondeu algo que não é imagem. Confira se o endereço é mesmo de uma câmera Amcrest/Dahua."
+        case .loginNoResponse:
+            return "A câmera está na rede e pediu login, mas não respondeu depois de receber usuário e senha. Em Administração → Status, \"Testar todas agora\" confere a senha pelo mesmo login do Safari e diz o motivo."
         }
     }
 
@@ -109,9 +113,7 @@ struct AmcrestClient {
 
     func get(_ url: URL?) async throws -> (Data, HTTPURLResponse) {
         guard let url else { throw CameraError.invalidAddress }
-        let delegate = TaskAuthDelegate(credential: AuthHandling.credential(for: camera, password: password))
-        let (data, response) = try await Self.session.data(from: url, delegate: delegate)
-        guard let http = response as? HTTPURLResponse else { throw CameraError.unexpectedContent }
+        let (data, http) = try await CameraHTTP.send(url, camera: camera, password: password, session: Self.session)
         if http.statusCode == 401 { throw CameraError.unauthorized }
         guard (200..<300).contains(http.statusCode) else { throw CameraError.http(http.statusCode) }
         return (data, http)
@@ -181,8 +183,9 @@ struct AmcrestClient {
     /// Baixa um arquivo gravado para `destination` (substitui se já existir).
     func download(_ file: RecordingFile, to destination: URL) async throws {
         guard let url = AmcrestEndpoints.loadFile(camera, path: file.filePath) else { throw CameraError.invalidAddress }
+        let request = try await CameraHTTP.authorizedRequest(url, camera: camera, password: password, session: Self.session)
         let delegate = TaskAuthDelegate(credential: AuthHandling.credential(for: camera, password: password))
-        let (tmp, response) = try await Self.session.download(from: url, delegate: delegate)
+        let (tmp, response) = try await Self.session.download(for: request, delegate: delegate)
         guard let http = response as? HTTPURLResponse else { throw CameraError.unexpectedContent }
         if http.statusCode == 401 { throw CameraError.unauthorized }
         guard (200..<300).contains(http.statusCode) else { throw CameraError.http(http.statusCode) }
@@ -221,5 +224,193 @@ struct AmcrestClient {
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         if let eq = text.firstIndex(of: "=") { return String(text[text.index(after: eq)...]) }
         return text
+    }
+}
+
+/// Login Digest montado pelo próprio app (em vez da negociação automática do URLSession).
+/// 1. Pede o desafio à câmera (resposta 401 rápida, sem senha).
+/// 2. Manda o pedido já com `Authorization`. Guarda o desafio para os próximos pedidos (snapshots seguidos).
+/// Se a câmera responde ao passo 1 e some no passo 2, o erro diz isso (`loginNoResponse`).
+enum CameraHTTP {
+    private actor ChallengeCache {
+        private var entries: [String: (DigestChallenge, Int)] = [:]
+        func next(_ key: String) -> (DigestChallenge, Int)? {
+            guard var e = entries[key] else { return nil }
+            e.1 += 1
+            entries[key] = e
+            return e
+        }
+        func store(_ key: String, _ c: DigestChallenge) -> Int { entries[key] = (c, 1); return 1 }
+        func drop(_ key: String) { entries[key] = nil }
+    }
+    private static let cache = ChallengeCache()
+    static let probeSession = URLSession(configuration: AuthHandling.makeConfiguration(requestTimeout: 6))
+
+    private static func key(_ camera: Camera) -> String { "\(camera.username)@\(camera.host):\(camera.httpPort)" }
+
+    private static func cnonce() -> String {
+        (0..<8).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+    }
+
+    static func header(_ challenge: DigestChallenge, nc: Int, url: URL, camera: Camera, password: String) -> String {
+        challenge.authorization(method: "GET", uri: DigestChallenge.requestURI(url),
+                                username: camera.username, password: password, nc: nc, cnonce: cnonce())
+    }
+
+    static func basic(_ camera: Camera, _ password: String) -> String {
+        "Basic " + Data("\(camera.username):\(password)".utf8).base64EncodedString()
+    }
+
+    /// Pedido com o login pronto. Sem senha, vai sem login.
+    static func authorizedRequest(_ url: URL, camera: Camera, password: String?,
+                                  session: URLSession = probeSession, fresh: Bool = false) async throws -> URLRequest {
+        var request = URLRequest(url: url)
+        guard let password, !password.isEmpty else { return request }
+        if fresh { await cache.drop(key(camera)) }
+        if let entry = await cache.next(key(camera)) {
+            let (c, nc) = entry
+            request.setValue(header(c, nc: nc, url: url, camera: camera, password: password), forHTTPHeaderField: "Authorization")
+            return request
+        }
+        // Desafio novo, pedido leve (modelo do aparelho).
+        guard let probe = AmcrestEndpoints.deviceType(camera) else { return request }
+        let (_, response) = try await session.data(from: probe)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 401,
+              let value = http.value(forHTTPHeaderField: "WWW-Authenticate") else { return request }
+        if let c = DigestChallenge.parse(value) {
+            let nc = await cache.store(key(camera), c)
+            request.setValue(header(c, nc: nc, url: url, camera: camera, password: password), forHTTPHeaderField: "Authorization")
+        } else if value.lowercased().hasPrefix("basic") {
+            request.setValue(basic(camera, password), forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// GET com login. Devolve a resposta como veio (inclusive 401); quem chama decide o erro.
+    static func send(_ url: URL, camera: Camera, password: String?, session: URLSession) async throws -> (Data, HTTPURLResponse) {
+        guard let password, !password.isEmpty else { return try await plain(URLRequest(url: url), session) }
+        let k = key(camera)
+
+        // 1º contato: sem login, para receber o desafio (ou a resposta, se a câmera não pedir login).
+        var challenge: DigestChallenge?
+        var nc = 1
+        if let entry = await cache.next(k) {
+            challenge = entry.0; nc = entry.1
+        } else {
+            let (data, http) = try await plain(URLRequest(url: url), session)
+            guard http.statusCode == 401 else { return (data, http) }
+            let value = http.value(forHTTPHeaderField: "WWW-Authenticate") ?? ""
+            if let c = DigestChallenge.parse(value) {
+                challenge = c; nc = await cache.store(k, c)
+            } else if value.lowercased().hasPrefix("basic") {
+                var r = URLRequest(url: url)
+                r.setValue(basic(camera, password), forHTTPHeaderField: "Authorization")
+                return try await authed(r, session)
+            } else {
+                return (data, http)
+            }
+        }
+
+        guard let c = challenge else { throw CameraError.unexpectedContent }
+        var request = URLRequest(url: url)
+        request.setValue(header(c, nc: nc, url: url, camera: camera, password: password), forHTTPHeaderField: "Authorization")
+        let (data, http) = try await authed(request, session)
+        guard http.statusCode == 401 else { return (data, http) }
+
+        // Desafio vencido (nonce novo) ou senha errada: tenta uma vez com o desafio que veio agora.
+        await cache.drop(k)
+        guard let value = http.value(forHTTPHeaderField: "WWW-Authenticate"),
+              let fresh = DigestChallenge.parse(value) else { return (data, http) }
+        let n2 = await cache.store(k, fresh)
+        var retry = URLRequest(url: url)
+        retry.setValue(header(fresh, nc: n2, url: url, camera: camera, password: password), forHTTPHeaderField: "Authorization")
+        let result = try await authed(retry, session)
+        if result.1.statusCode == 401 { await cache.drop(k) }
+        return result
+    }
+
+    private static func plain(_ request: URLRequest, _ session: URLSession) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw CameraError.unexpectedContent }
+        return (data, http)
+    }
+
+    /// Pedido já com login. Se a câmera ficar muda aqui, o problema é o login (ela respondeu antes).
+    private static func authed(_ request: URLRequest, _ session: URLSession) async throws -> (Data, HTTPURLResponse) {
+        do {
+            return try await plain(request, session)
+        } catch let e as URLError where e.code == .timedOut || e.code == .networkConnectionLost {
+            throw CameraError.loginNoResponse
+        }
+    }
+}
+
+/// Confere usuário e senha pelo login da página da câmera (`/RPC2_Login`, o mesmo do Safari).
+/// Só para diagnóstico: não abre vídeo, encerra a sessão logo em seguida.
+enum WebLoginCheck {
+    static func run(camera: Camera, password: String?) async -> WebLogin.Outcome? {
+        guard let password, !password.isEmpty,
+              let base = URL(string: "\(camera.useHTTPS ? "https" : "http")://\(camera.host):\(camera.httpPort)") else { return nil }
+        let config = AuthHandling.makeConfiguration(requestTimeout: 6)
+        config.timeoutIntervalForResource = 15
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+
+        func post(_ path: String, _ body: [String: Any]) async -> [String: Any]? {
+            var r = URLRequest(url: base.appendingPathComponent(path))
+            r.httpMethod = "POST"
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            guard let result = try? await session.data(for: r) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any]
+        }
+
+        guard let first = await post("RPC2_Login", WebLogin.challengeBody(username: camera.username)),
+              let params = first["params"] as? [String: Any],
+              let realm = params["realm"] as? String, let random = params["random"] as? String else {
+            if let first, let err = first["error"] as? [String: Any] {
+                return WebLogin.outcome(result: false, code: err["code"] as? Int, message: err["message"] as? String)
+            }
+            return nil
+        }
+        let session1 = first["session"]
+        let hash = WebLogin.passwordHash(username: camera.username, password: password, realm: realm, random: random)
+        var body: [String: Any] = [
+            "method": "global.login", "id": 2,
+            "params": ["userName": camera.username, "password": hash, "clientType": "Web3.0",
+                       "loginType": "Direct", "authorityType": params["encryption"] as? String ?? "Default"],
+        ]
+        if let session1 { body["session"] = session1 }
+        guard let second = await post("RPC2_Login", body) else { return .other("sem resposta ao login") }
+        let ok = second["result"] as? Bool ?? false
+        if ok, let s = second["session"] {
+            _ = await post("RPC2", ["method": "global.logout", "params": NSNull(), "id": 3, "session": s])
+        }
+        let err = second["error"] as? [String: Any]
+        return WebLogin.outcome(result: ok, code: err?["code"] as? Int, message: err?["message"] as? String)
+    }
+}
+
+/// Quando o login pela API falha, confere a senha pelo login da página (o do Safari) e explica o motivo.
+enum LoginDiagnosis {
+    static func explain(_ error: Error, camera: Camera, password: String?) async -> String {
+        let base = CameraError.friendly(error, camera: camera)
+        let loginProblem: Bool
+        switch error as? CameraError {
+        case .loginNoResponse?, .unauthorized?: loginProblem = true
+        default: loginProblem = false
+        }
+        guard loginProblem else { return base }
+        guard let outcome = await WebLoginCheck.run(camera: camera, password: password) else { return base }
+        switch outcome {
+        case .ok:
+            return "Usuário e senha estão certos (o login da página da câmera aceitou), mas a câmera não libera a API de imagem para este usuário. Na página http://\(camera.host) confira Configuração → Sistema → Segurança/Serviços: deixe \"Autenticação\" em Digest/Basic (não só \"Segura\") e o CGI habilitado."
+        case .wrongPassword:
+            return "A câmera recusou a senha do usuário \(camera.username). Edite a câmera em Administração e digite a mesma senha que você usa no Safari."
+        case .locked(let msg):
+            return "A câmera bloqueou o usuário \(camera.username) por excesso de tentativas\(msg.map { " (\($0))" } ?? ""). Espere 30 minutos sem abrir o app, ou reinicie a câmera, e tente de novo."
+        case .other(let msg):
+            return base + " (login da página: \(msg))"
+        }
     }
 }

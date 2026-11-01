@@ -173,7 +173,20 @@ final class CameraFeed: ObservableObject {
                            delegate: delegate, delegateQueue: queue)
         session?.invalidateAndCancel()
         session = s
-        s.dataTask(with: url).resume()
+        // Login Digest montado pelo app (desafio novo a cada conexão do vídeo).
+        let cam = camera, pwd = password
+        Task { [weak self] in
+            let request: URLRequest
+            do {
+                request = try await CameraHTTP.authorizedRequest(url, camera: cam, password: pwd, fresh: true)
+            } catch {
+                guard let self, gen == self.generation, self.active else { return }
+                self.fail(CameraError.friendly(error, camera: cam), retry: true)
+                return
+            }
+            guard let self, gen == self.generation, self.active else { return }
+            s.dataTask(with: request).resume()
+        }
     }
 
     private func handleMJPEGResponse(_ http: HTTPURLResponse, isMultipart: Bool, gen: Int) {

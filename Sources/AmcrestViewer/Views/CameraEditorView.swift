@@ -139,13 +139,14 @@ struct CameraEditorView: View {
                         testResult = "Achei pelo S/N em \(moved.host) (o IP \(cam.host) não respondia). Modelo: \(model). Clique em Salvar."
                     } catch {
                         testOK = false
-                        testResult = "Achei pelo S/N em \(moved.host), mas: " + CameraError.friendly(error, camera: moved)
+                        testResult = "Achei pelo S/N em \(moved.host), mas: "
+                            + (await LoginDiagnosis.explain(error, camera: moved, password: effectivePassword))
                     }
                     return
                 }
                 testOK = false
-                testResult = CameraError.friendly(error, camera: cam)
-                    + (trimmedSerial.isEmpty ? "" : " Também procurei o S/N \(trimmedSerial) em toda a rede interna do Mac e não achei.")
+                testResult = (await LoginDiagnosis.explain(error, camera: cam, password: effectivePassword))
+                    + (error is CameraError || trimmedSerial.isEmpty ? "" : " Também procurei o S/N \(trimmedSerial) em toda a rede interna do Mac e não achei.")
             }
         }
     }

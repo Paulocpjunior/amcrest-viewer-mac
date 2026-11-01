@@ -96,7 +96,7 @@ final class CameraStore: ObservableObject {
                         let model = try await AmcrestClient(camera: cam, password: pwd).deviceType()
                         return (cam.id, .live, "Responde (\(model))")
                     } catch {
-                        return (cam.id, .failed, CameraError.friendly(error, camera: cam))
+                        return (cam.id, .failed, await LoginDiagnosis.explain(error, camera: cam, password: pwd))
                     }
                 }
             }
